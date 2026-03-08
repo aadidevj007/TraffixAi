@@ -13,10 +13,20 @@ const firebaseConfig = {
     appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-// Initialize Firebase (prevent duplicate initialization)
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+const hasFirebaseConfig = Boolean(
+    firebaseConfig.apiKey &&
+    firebaseConfig.authDomain &&
+    firebaseConfig.projectId &&
+    firebaseConfig.appId
+);
 
-export const auth = getAuth(app);
-export const db = getFirestore(app);
-export const storage = getStorage(app);
+// Prevent build-time crashes when env vars are missing on server/prerender.
+const canInit = hasFirebaseConfig || typeof window !== 'undefined';
+const app = canInit
+    ? (getApps().length === 0 ? initializeApp(firebaseConfig) : getApp())
+    : null;
+
+export const auth = app ? getAuth(app) : ({} as ReturnType<typeof getAuth>);
+export const db = app ? getFirestore(app) : ({} as ReturnType<typeof getFirestore>);
+export const storage = app ? getStorage(app) : ({} as ReturnType<typeof getStorage>);
 export default app;
