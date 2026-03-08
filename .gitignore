@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Python
+**/__pycache__/
+**/*.pyc
+**/venv/
+
+# Build artifacts
+.firebase/
+**/.next/
+**/out/
+**/dist/
+**/build/
+
+# Logs
+*.log
+**/*.log
+frontend/frontend.err.log
+frontend/frontend.out.log
+backend/backend.err.log
+backend/backend.out.log
+firebase-debug.log
+
+# Runtime/generated data
+backend/uploads/
+backend/processed/
+traffic/backend/uploads/
+traffic/backend/processed/
+
+# Local env / secrets
+.env
+.env.*
+**/.env.local
+firebase/serviceAccountKey.json
+
+# Editors/OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Misc
+*.tsbuildinfo
+frontend/.vercel/
+frontend/.git_backup/

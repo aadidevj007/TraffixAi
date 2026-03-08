@@ -1,0 +1,26 @@
+{
+  "firestore": {
+    "rules": "firebase/firestore.rules"
+  },
+  "hosting": {
+    "source": "frontend",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "frameworksBackend": {
+      "region": "asia-south1"
+    },
+    "rewrites": [
+      {
+        "source": "/api/python/**",
+        "run": {
+          "serviceId": "traffixai-yolo",
+          "region": "asia-south1"
+        }
+      }
+    ]
+  }
+}
+

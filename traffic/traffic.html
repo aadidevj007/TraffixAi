@@ -1,0 +1,1612 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mappls API Showcase - Complete Feature Suite</title>
+
+    <!-- Mappls SDK -->
+    <script
+        src="https://apis.mappls.com/advancedmaps/api/a68a0a4e98a6207b9314e02f074cd068/map_sdk?layer=vector&v=3.0&callback=initMap"></script>
+    <script
+        src="https://apis.mappls.com/advancedmaps/api/a68a0a4e98a6207b9314e02f074cd068/map_sdk_plugins?v=3.0"></script>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Lexend:wght@300;400;600;800&display=swap"
+        rel="stylesheet">
+
+    <style>
+        :root {
+            --neon-blue: #00D9FF;
+            --neon-purple: #B537F2;
+            --neon-pink: #FF006E;
+            --dark-bg: #0A0E27;
+            --darker-bg: #050814;
+            --card-bg: #131832;
+            --text-light: #E0E7FF;
+            --text-muted: #8B93B5;
+            --success: #00FF88;
+            --warning: #FFB800;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Lexend', sans-serif;
+            background: var(--darker-bg);
+            color: var(--text-light);
+            overflow-x: hidden;
+            position: relative;
+        }
+
+        /* Animated Background */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background:
+                radial-gradient(circle at 20% 50%, rgba(181, 55, 242, 0.15), transparent 50%),
+                radial-gradient(circle at 80% 80%, rgba(0, 217, 255, 0.15), transparent 50%),
+                radial-gradient(circle at 40% 20%, rgba(255, 0, 110, 0.1), transparent 50%);
+            z-index: 0;
+            animation: gradientShift 15s ease infinite;
+        }
+
+        @keyframes gradientShift {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.7;
+            }
+        }
+
+        /* Header */
+        .header {
+            background: linear-gradient(135deg, var(--card-bg), rgba(19, 24, 50, 0.95));
+            backdrop-filter: blur(10px);
+            border-bottom: 2px solid var(--neon-blue);
+            padding: 1.5rem 2rem;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            box-shadow: 0 8px 32px rgba(0, 217, 255, 0.2);
+        }
+
+        .header-content {
+            max-width: 1600px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        h1 {
+            font-size: 2rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--neon-blue), var(--neon-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: -0.02em;
+            text-transform: uppercase;
+        }
+
+        .subtitle {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            font-weight: 300;
+            margin-top: 0.25rem;
+            font-family: 'Space Mono', monospace;
+        }
+
+        .api-badge {
+            background: linear-gradient(135deg, var(--neon-purple), var(--neon-pink));
+            padding: 0.5rem 1.2rem;
+            border-radius: 50px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            box-shadow: 0 4px 20px rgba(181, 55, 242, 0.4);
+        }
+
+        /* Main Container */
+        .container {
+            max-width: 1600px;
+            margin: 2rem auto;
+            padding: 0 2rem;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* Tab Navigation */
+        .tab-nav {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 2rem;
+            flex-wrap: wrap;
+            background: var(--card-bg);
+            padding: 1rem;
+            border-radius: 16px;
+            border: 1px solid rgba(0, 217, 255, 0.2);
+        }
+
+        .tab-btn {
+            padding: 0.75rem 1.5rem;
+            background: transparent;
+            border: 2px solid rgba(0, 217, 255, 0.3);
+            color: var(--text-muted);
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            font-family: 'Lexend', sans-serif;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .tab-btn:hover {
+            border-color: var(--neon-blue);
+            color: var(--neon-blue);
+            transform: translateY(-2px);
+        }
+
+        .tab-btn.active {
+            background: linear-gradient(135deg, var(--neon-blue), var(--neon-purple));
+            border-color: transparent;
+            color: white;
+            box-shadow: 0 8px 24px rgba(0, 217, 255, 0.4);
+        }
+
+        /* Content Layout */
+        .content-layout {
+            display: grid;
+            grid-template-columns: 450px 1fr;
+            gap: 2rem;
+        }
+
+        /* Control Panel */
+        .control-panel {
+            background: var(--card-bg);
+            border-radius: 16px;
+            padding: 2rem;
+            border: 1px solid rgba(0, 217, 255, 0.2);
+            height: fit-content;
+            position: sticky;
+            top: 120px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+
+        .panel-title {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: var(--neon-blue);
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .panel-title::before {
+            content: '▸';
+            font-size: 1.5rem;
+            color: var(--neon-purple);
+        }
+
+        .input-group {
+            margin-bottom: 1.25rem;
+        }
+
+        label {
+            display: block;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--neon-blue);
+            margin-bottom: 0.5rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            font-family: 'Space Mono', monospace;
+        }
+
+        input,
+        select,
+        textarea {
+            width: 100%;
+            padding: 0.9rem 1rem;
+            background: rgba(0, 217, 255, 0.05);
+            border: 2px solid rgba(0, 217, 255, 0.2);
+            border-radius: 10px;
+            color: var(--text-light);
+            font-size: 0.95rem;
+            font-family: 'Lexend', sans-serif;
+            transition: all 0.3s ease;
+        }
+
+        input:focus,
+        select:focus,
+        textarea:focus {
+            outline: none;
+            border-color: var(--neon-blue);
+            background: rgba(0, 217, 255, 0.1);
+            box-shadow: 0 0 20px rgba(0, 217, 255, 0.2);
+        }
+
+        input::placeholder {
+            color: var(--text-muted);
+        }
+
+        /* Autosuggest Dropdown */
+        .suggestions-dropdown {
+            position: absolute;
+            background: var(--card-bg);
+            border: 2px solid var(--neon-blue);
+            border-radius: 10px;
+            max-height: 300px;
+            overflow-y: auto;
+            z-index: 1000;
+            width: calc(100% - 4rem);
+            margin-top: 0.5rem;
+            box-shadow: 0 8px 32px rgba(0, 217, 255, 0.3);
+            display: none;
+        }
+
+        .suggestions-dropdown.show {
+            display: block;
+        }
+
+        .suggestion-item {
+            padding: 1rem;
+            cursor: pointer;
+            border-bottom: 1px solid rgba(0, 217, 255, 0.1);
+            transition: all 0.2s ease;
+        }
+
+        .suggestion-item:hover {
+            background: rgba(0, 217, 255, 0.1);
+        }
+
+        .suggestion-item:last-child {
+            border-bottom: none;
+        }
+
+        .suggestion-name {
+            font-weight: 600;
+            color: var(--text-light);
+            margin-bottom: 0.25rem;
+        }
+
+        .suggestion-address {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        button {
+            width: 100%;
+            padding: 1rem;
+            background: linear-gradient(135deg, var(--neon-blue), var(--neon-purple));
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 0.95rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-family: 'Lexend', sans-serif;
+            box-shadow: 0 8px 24px rgba(0, 217, 255, 0.4);
+            margin-top: 0.5rem;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 32px rgba(0, 217, 255, 0.6);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        /* Results */
+        .results {
+            margin-top: 1.5rem;
+            padding: 1.5rem;
+            background: linear-gradient(135deg, rgba(181, 55, 242, 0.2), rgba(0, 217, 255, 0.2));
+            border-radius: 12px;
+            border: 1px solid var(--neon-purple);
+            opacity: 0;
+            transform: translateY(10px);
+            transition: all 0.5s ease;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .results.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .result-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .result-item:last-child {
+            margin-bottom: 0;
+            padding-bottom: 0;
+            border-bottom: none;
+        }
+
+        .result-label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            font-family: 'Space Mono', monospace;
+        }
+
+        .result-value {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: var(--neon-blue);
+            font-family: 'Space Mono', monospace;
+        }
+
+        /* Map Container */
+        .map-container {
+            background: var(--card-bg);
+            border-radius: 16px;
+            overflow: hidden;
+            border: 1px solid rgba(0, 217, 255, 0.2);
+            position: relative;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+
+        #map {
+            width: 100%;
+            height: 700px;
+        }
+
+        .map-overlay {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            background: rgba(19, 24, 50, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 0.75rem 1.25rem;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--neon-blue);
+            border: 1px solid rgba(0, 217, 255, 0.3);
+            z-index: 1000;
+            font-family: 'Space Mono', monospace;
+        }
+
+        /* Tab Content */
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+            animation: fadeIn 0.5s ease;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Loading */
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 1rem;
+            color: var(--neon-blue);
+            font-weight: 600;
+            font-family: 'Space Mono', monospace;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        /* POI List */
+        .poi-list {
+            display: grid;
+            gap: 1rem;
+        }
+
+        .poi-card {
+            background: rgba(0, 217, 255, 0.05);
+            border: 1px solid rgba(0, 217, 255, 0.2);
+            border-radius: 10px;
+            padding: 1rem;
+            transition: all 0.3s ease;
+        }
+
+        .poi-card:hover {
+            background: rgba(0, 217, 255, 0.1);
+            border-color: var(--neon-blue);
+            transform: translateX(5px);
+        }
+
+        .poi-name {
+            font-weight: 700;
+            color: var(--text-light);
+            margin-bottom: 0.5rem;
+        }
+
+        .poi-distance {
+            font-size: 0.85rem;
+            color: var(--success);
+            font-family: 'Space Mono', monospace;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--darker-bg);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: linear-gradient(180deg, var(--neon-blue), var(--neon-purple));
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--neon-blue);
+        }
+
+        /* Responsive */
+        .content-layout {
+            display: grid;
+            grid-template-columns: 350px 1fr;
+            gap: 0;
+            height: calc(100vh - 160px);
+            background: var(--dark-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 0 0 20px 20px;
+            overflow: hidden;
+        }
+
+        .sidebar {
+            background: rgba(13, 17, 23, 0.4);
+            border-right: 1px solid var(--glass-border);
+            overflow-y: auto;
+            padding: 1.5rem;
+        }
+
+        .map-container {
+            position: relative;
+            height: 100%;
+            min-height: auto;
+        }
+
+        .tab-content {
+            display: none;
+            height: 100%;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Responsive */
+        @media (max-width: 1200px) {
+            .content-layout {
+                grid-template-columns: 1fr;
+                height: auto;
+            }
+
+            .sidebar {
+                border-right: none;
+                border-bottom: 1px solid var(--glass-border);
+            }
+
+            .map-container {
+                height: 500px;
+            }
+        }
+
+        /* Dashboard Styles */
+        .dashboard-container {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 90%;
+            max-width: 600px;
+            background: rgba(13, 17, 23, 0.95);
+            border: 1px solid var(--neon-blue);
+            border-radius: 20px;
+            padding: 1.5rem;
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            z-index: 1000;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), inset 0 0 15px rgba(0, 217, 255, 0.2);
+            transition: all 0.3s ease;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .dashboard-container.show {
+            opacity: 1;
+            pointer-events: all;
+        }
+
+        .dash-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .dash-label {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .dash-value {
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: var(--neon-blue);
+            font-family: 'Courier New', Courier, monospace;
+        }
+
+        .dash-icon {
+            font-size: 1.5rem;
+        }
+
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .status-running {
+            background: rgba(0, 255, 136, 0.2);
+            color: var(--success);
+            border: 1px solid var(--success);
+        }
+
+        .status-paused {
+            background: rgba(255, 186, 0, 0.2);
+            color: var(--neon-yellow);
+            border: 1px solid var(--neon-yellow);
+        }
+
+        .car-marker {
+            transition: transform 0.1s linear;
+        }
+    </style>
+</head>
+
+<body>
+    <header class="header">
+        <div class="header-content">
+            <div>
+                <h1>Mappls API Showcase</h1>
+                <p class="subtitle">Complete Feature Suite Demo</p>
+            </div>
+            <div class="api-badge">Powered by Mappls</div>
+        </div>
+    </header>
+
+    <div class="container">
+        <!-- Tab Navigation -->
+        <div class="tab-nav">
+            <button class="tab-btn active" onclick="switchTab('my-location')">📍 My Location</button>
+            <button class="tab-btn" onclick="switchTab('autosuggest')">Autosuggest</button>
+            <button class="tab-btn" onclick="switchTab('geocoding')">Geocoding</button>
+            <button class="tab-btn" onclick="switchTab('reverse-geocode')">Reverse Geocode</button>
+            <button class="tab-btn" onclick="switchTab('nearby')">Nearby Places</button>
+            <button class="tab-btn" onclick="switchTab('routing')">Routing</button>
+            <button class="tab-btn" onclick="switchTab('distance-matrix')">Distance Matrix</button>
+            <button class="tab-btn" onclick="switchTab('poi-route')">POI Along Route</button>
+            <button class="tab-btn" onclick="switchTab('driver-mode')">🛣️ Driver View</button>
+        </div>
+
+        <div class="content-layout">
+            <div class="sidebar">
+                <!-- My Location Tab -->
+                <div id="my-location" class="tab-content active">
+                    <div class="control-panel">
+                        <h2 class="panel-title">My Location & Nearby</h2>
+                        <div class="info-box">
+                            <strong>What it does:</strong> Finds your current location and discovers nearby places
+                        </div>
+
+                        <button onclick="detectMyLocation()">📍 Detect My Location</button>
+
+                        <div class="loading" id="location-loading">Detecting location...</div>
+
+                        <div class="results" id="location-results">
+                            <div class="result-item">
+                                <span class="result-label">Your Location</span>
+                                <span class="result-value" id="my-address" style="font-size: 0.85rem;">--</span>
+                            </div>
+                            <div class="result-item">
+                                <span class="result-label">Coordinates</span>
+                                <span class="result-value" id="my-coords" style="font-size: 0.9rem;">--</span>
+                            </div>
+                        </div>
+
+                        <div class="input-group" style="margin-top: 1.5rem;">
+                            <label for="my-location-category">Find Nearby</label>
+                            <select id="my-location-category">
+                                <option value="restaurants">🍽️ Restaurants</option>
+                                <option value="atm">💰 ATMs</option>
+                                <option value="hospital">🏥 Hospitals</option>
+                                <option value="pharmacy">💊 Pharmacies</option>
+                                <option value="coffee">☕ Coffee Shops</option>
+                                <option value="fuel station">⛽ Petrol Pumps</option>
+                                <option value="parking">🅿️ Parking</option>
+                                <option value="hotel">🏨 Hotels</option>
+                                <option value="bank">🏦 Banks</option>
+                                <option value="shopping mall">🛍️ Shopping Malls</option>
+                            </select>
+                        </div>
+
+                        <button onclick="findNearMyLocation()">Search Nearby</button>
+
+                        <div class="loading" id="my-nearby-loading">Searching...</div>
+
+                        <div class="results" id="my-nearby-results">
+                            <div id="my-nearby-list" class="poi-list"></div>
+                        </div>
+                    </div>
+                    <!-- Driver Mode Tab -->
+                    <div id="driver-mode" class="tab-content">
+
+                        <div class="control-panel">
+                            <h2 class="panel-title">Driver Navigation Mode</h2>
+                            <div class="info-box"
+                                style="background: rgba(181, 55, 242, 0.1); border-color: var(--neon-purple);">
+                                <strong style="color: var(--neon-purple);">What it does:</strong> Simulates a real
+                                driving experience with moving car and live statistics.
+                            </div>
+
+                            <div class="input-group">
+                                <label for="drive-origin">Starting From</label>
+                                <input type="text" id="drive-origin" placeholder="e.g., Delhi Airport"
+                                    value="Delhi Airport">
+                            </div>
+
+                            <div class="input-group">
+                                <label for="drive-dest">Destination</label>
+                                <input type="text" id="drive-dest" placeholder="e.g., Connaught Place"
+                                    value="Connaught Place">
+                            </div>
+
+                            <div class="input-group">
+                                <label for="drive-speed">Simulation Speed</label>
+                                <select id="drive-speed">
+                                    <option value="1">Realistic (Slow)</option>
+                                    <option value="5" selected>Fast (5x)</option>
+                                    <option value="20">Turbo (20x)</option>
+                                </select>
+                            </div>
+
+                            <div style="display: flex; gap: 1rem; margin-top: 1rem;">
+                                <button onclick="startNavigation()"
+                                    style="flex: 2; background: linear-gradient(135deg, #00D9FF, #0055FF);">🚗 Start
+                                    Drive</button>
+                                <button onclick="stopNavigation()" style="flex: 1; background: #333;">⏹
+                                    Stop</button>
+                            </div>
+
+                            <div class="loading" id="drive-loading">Calculating route...</div>
+
+                            <div class="results" id="drive-log"
+                                style="max-height: 200px; overflow-y: auto; font-size: 0.8rem; font-family: monospace;">
+                                <div style="color: var(--text-muted);">Ready to start navigation...</div>
+                            </div>
+                        </div>
+
+                        <div class="map-container">
+                            <div class="map-overlay">🛣️ Driver Mode View</div>
+                            <div id="map-driver"></div>
+
+                            <div id="driver-dashboard" class="dashboard-container">
+                                <div class="dash-item">
+                                    <span class="dash-icon">⚡</span>
+                                    <span class="dash-label">Speed</span>
+                                    <span class="dash-value" id="dash-speed">0 km/h</span>
+                                </div>
+                                <div class="dash-item">
+                                    <span class="dash-icon">📏</span>
+                                    <span class="dash-label">Remaining</span>
+                                    <span class="dash-value" id="dash-dist">0.0 km</span>
+                                </div>
+                                <div class="dash-item">
+                                    <span class="dash-icon">🕒</span>
+                                    <span class="dash-label">ETA</span>
+                                    <span class="dash-value" id="dash-eta">0 min</span>
+                                </div>
+                                <div class="dash-item">
+                                    <span class="status-badge status-running" id="dash-status">Simulating</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Autosuggest Tab -->
+                <div id="autosuggest" class="tab-content">
+
+                    <div class="control-panel">
+                        <h2 class="panel-title">Autosuggest Search</h2>
+                        <div class="info-box">
+                            <strong>What it does:</strong> Type-as-you-go smart search with intelligent suggestions
+                        </div>
+
+                        <div class="input-group" style="position: relative;">
+                            <label for="search-query">Search Location</label>
+                            <input type="text" id="search-query" placeholder="Type a place name..."
+                                oninput="handleAutosuggest(this.value)">
+                            <div id="suggestions" class="suggestions-dropdown"></div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- Geocoding Tab -->
+            <div id="geocoding" class="tab-content">
+
+                <div class="control-panel">
+                    <h2 class="panel-title">Geocoding</h2>
+                    <div class="info-box">
+                        <strong>What it does:</strong> Convert addresses to coordinates (lat/lng)
+                    </div>
+
+                    <div class="input-group">
+                        <label for="geocode-address">Enter Address</label>
+                        <input type="text" id="geocode-address" placeholder="e.g., Connaught Place, Delhi">
+                    </div>
+
+                    <button onclick="geocodeAddress()">Geocode Address</button>
+
+                    <div class="loading" id="geocode-loading">Processing...</div>
+
+                    <div class="results" id="geocode-results">
+                        <div class="result-item">
+                            <span class="result-label">Latitude</span>
+                            <span class="result-value" id="geo-lat">--</span>
+                        </div>
+                        <div class="result-item">
+                            <span class="result-label">Longitude</span>
+                            <span class="result-value" id="geo-lng">--</span>
+                        </div>
+                        <div class="result-item">
+                            <span class="result-label">Formatted Address</span>
+                            <span class="result-value" id="geo-address" style="font-size: 0.9rem;">--</span>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Reverse Geocoding Tab -->
+        <div id="reverse-geocode" class="tab-content">
+
+            <div class="control-panel">
+                <h2 class="panel-title">Reverse Geocoding</h2>
+                <div class="info-box">
+                    <strong>What it does:</strong> Convert coordinates to readable addresses. Click on the
+                    map!
+                </div>
+
+                <div class="input-group">
+                    <label for="reverse-lat">Latitude</label>
+                    <input type="number" id="reverse-lat" placeholder="28.6139" step="0.000001">
+                </div>
+
+                <div class="input-group">
+                    <label for="reverse-lng">Longitude</label>
+                    <input type="number" id="reverse-lng" placeholder="77.2090" step="0.000001">
+                </div>
+
+                <button onclick="reverseGeocode()">Get Address</button>
+
+                <div class="loading" id="reverse-loading">Processing...</div>
+
+                <div class="results" id="reverse-results">
+                    <div class="result-item">
+                        <span class="result-label">Address</span>
+                        <span class="result-value" id="reverse-address" style="font-size: 0.85rem;">--</span>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Nearby Places Tab -->
+    <div id="nearby" class="tab-content">
+
+        <div class="control-panel">
+            <h2 class="panel-title">Nearby Places</h2>
+            <div class="info-box">
+                <strong>What it does:</strong> Find POIs near any location
+            </div>
+
+            <div class="input-group">
+                <label for="nearby-location">Location</label>
+                <input type="text" id="nearby-location" placeholder="e.g., India Gate">
+            </div>
+            <!-- Nearby -->
+            <div id="nearby" class="tab-content">
+                <div class="control-panel">
+                    <h2 class="panel-title">Nearby</h2>
+                    <input type="text" id="nearby-location" placeholder="Center"><input type="text" id="nearby-keyword"
+                        placeholder="What?">
+                    <button onclick="findNearbyPlaces()">Find</button>
+                    <div class="results" id="nearby-results">
+                        <div id="nearby-list"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Routing -->
+            <div id="routing" class="tab-content">
+                <div class="control-panel">
+                    <h2 class="panel-title">Routing</h2>
+                    <input type="text" id="route-origin" placeholder="From"><input type="text" id="route-dest"
+                        placeholder="To">
+                    <button onclick="calculateRoute()">Go</button>
+                    <div class="results" id="route-results"><span id="route-distance">--</span> | <span
+                            id="route-duration">--</span></div>
+                </div>
+            </div>
+
+            <!-- Matrix -->
+            <div id="distance-matrix" class="tab-content">
+                <div class="control-panel">
+                    <h2 class="panel-title">Matrix</h2>
+                    <textarea id="matrix-origins" placeholder="Origins"></textarea><textarea id="matrix-destinations"
+                        placeholder="Dests"></textarea>
+                    <button onclick="calculateMatrix()">Go</button>
+                    <div class="results" id="matrix-results">
+                        <div id="matrix-output"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- POI Route -->
+            <div id="poi-route" class="tab-content">
+                <div class="control-panel">
+                    <h2 class="panel-title">POI Route</h2>
+                    <input type="text" id="poi-origin" placeholder="Start"><input type="text" id="poi-dest"
+                        placeholder="End">
+                    <select id="poi-category">
+                        <option value="FINATM">ATM</option>
+                        <option value="HOTRES">Food</option>
+                    </select>
+                    <button onclick="findPOIAlongRoute()">Go</button>
+                    <div class="results" id="poi-results">
+                        <div id="poi-output"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="map-container">
+            <div class="map-overlay" id="map-mode-label">📍 Map Explorer</div>
+            <div id="map"></div>
+            <div id="driver-dashboard" class="dashboard-container">
+                <div class="dash-item"><span class="dash-icon">⚡</span><span class="dash-value" id="dash-speed">0
+                        km/h</span></div>
+                <div class="dash-item"><span class="dash-icon">�</span><span class="dash-value" id="dash-dist">0.0
+                        km</span></div>
+                <div class="dash-item"><span class="dash-icon">🕒</span><span class="dash-value" id="dash-eta">0
+                        min</span></div>
+            </div>
+        </div>
+    </div>
+    </div>
+
+    <script>
+        let map;
+        let markers = [];
+        let polylines = [];
+        let currentTab = 'my-location';
+        let myLocationMarker = null;
+        let myCurrentLocation = null;
+        const API_KEY = 'a68a0a4e98a6207b9314e02f074cd068';
+
+        // Initialize map
+        function initMap() {
+            map = new mappls.Map('map', {
+                center: [28.6139, 77.2090],
+                zoom: 12,
+                zoomControl: true,
+                location: true
+            });
+
+            map.addListener('click', function (e) {
+                if (currentTab === 'reverse-geocode') {
+                    const lat = e.lngLat ? e.lngLat.lat : e.latlng.lat;
+                    const lng = e.lngLat ? e.lngLat.lng : e.latlng.lng;
+                    document.getElementById('reverse-lat').value = lat.toFixed(6);
+                    document.getElementById('reverse-lng').value = lng.toFixed(6);
+                    reverseGeocode();
+                }
+            });
+        }
+
+        // Tab switching logic
+        function switchTab(tabId) {
+            currentTab = tabId;
+
+            // UI Button states
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                const btnTab = btn.getAttribute('onclick').match(/'([^']+)'/)[1];
+                btn.classList.toggle('active', btnTab === tabId);
+            });
+
+            // Content visibility
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.toggle('active', tab.id === tabId);
+            });
+
+            // Map Overlay label
+            const labels = {
+                'my-location': '📍 My Location',
+                'autosuggest': '🔍 Search Places',
+                'geocoding': '📍 Geocoding',
+                'reverse-geocode': '📍 Rev Geocode',
+                'nearby': '✨ Nearby Finder',
+                'routing': '🛣️ Route Planner',
+                'distance-matrix': '📊 Matrix Calculation',
+                'poi-route': '📍 POI Along Route',
+                'driver-mode': '🚗 Driver Navigation'
+            };
+            document.getElementById('map-mode-label').textContent = labels[tabId] || 'Map Explorer';
+
+            // Driver Dashboard visibility
+            const dashboard = document.getElementById('driver-dashboard');
+            if (dashboard) dashboard.classList.toggle('show', tabId === 'driver-mode');
+
+            if (tabId !== 'driver-mode') stopNavigation();
+            clearMap();
+        }
+
+        // Driver Mode Simulation
+        let navInterval = null;
+        let navPath = [];
+        let navIndex = 0;
+        let carMarker = null;
+
+        function startNavigation() {
+            const origin = document.getElementById('drive-origin').value;
+            const dest = document.getElementById('drive-dest').value;
+            const speedMultiplier = parseInt(document.getElementById('drive-speed').value);
+            const log = document.getElementById('drive-log');
+
+            stopNavigation();
+            log.innerHTML = '<div style="color:var(--neon-blue)">Calculating route...</div>';
+
+            mappls.direction({ origin: origin, destination: dest }, function (data) {
+                if (data && data.routes && data.routes.length > 0) {
+                    const route = data.routes[0];
+                    navPath = [];
+
+                    // Build path from steps
+                    route.legs[0].steps.forEach(step => {
+                        navPath.push({ lat: step.start_location.lat, lng: step.start_location.lng });
+                    });
+                    navPath.push({ lat: route.end_location.lat, lng: route.end_location.lng });
+
+                    navIndex = 0;
+                    initCarMarker(navPath[0]);
+                    log.innerHTML = '<div style="color:var(--success)">Simulation Started</div>';
+
+                    navInterval = setInterval(() => {
+                        if (navIndex >= navPath.length) {
+                            stopNavigation();
+                            log.innerHTML = '<div style="color:var(--success)">Reached Destination!</div>';
+                            return;
+                        }
+
+                        const pos = navPath[navIndex];
+                        if (carMarker) carMarker.setPosition(pos);
+                        map.setCenter(pos);
+
+                        // Update dashboard
+                        const progress = (navIndex / (navPath.length - 1));
+                        const remDist = (route.distance / 1000) * (1 - progress);
+                        const remTime = Math.round((route.duration / 60) * (1 - progress));
+
+                        document.getElementById('dash-speed').textContent = Math.floor(40 + Math.random() * 15) + ' km/h';
+                        document.getElementById('dash-dist').textContent = remDist.toFixed(1) + ' km';
+                        document.getElementById('dash-eta').textContent = remTime + ' min';
+
+                        navIndex++;
+                    }, 1000 / speedMultiplier);
+                } else {
+                    log.innerHTML = '<div style="color:var(--error)">Route Failed</div>';
+                }
+            });
+        }
+
+        function initCarMarker(pos) {
+            if (carMarker) carMarker.remove();
+            carMarker = new mappls.Marker({
+                map: map,
+                position: pos,
+                width: 40,
+                height: 40,
+                icon: 'https://cdn-icons-png.flaticon.com/512/744/744465.png'
+            });
+            map.setZoom(17);
+            map.setCenter(pos);
+        }
+
+        function stopNavigation() {
+            if (navInterval) clearInterval(navInterval);
+            navInterval = null;
+            if (carMarker) {
+                carMarker.remove();
+                carMarker = null;
+            }
+            const log = document.getElementById('drive-log');
+            if (log) log.innerHTML = 'READY';
+        }
+
+        // Clear map markers and polylines
+        function clearMap() {
+            markers.forEach(marker => {
+                if (marker.remove) marker.remove();
+                else if (marker.setMap) marker.setMap(null);
+            });
+            polylines.forEach(polyline => {
+                if (polyline.remove) polyline.remove();
+                else if (polyline.setMap) polyline.setMap(null);
+            });
+            markers = [];
+            polylines = [];
+        }
+
+        // MY LOCATION FEATURES
+        // MY LOCATION FEATURES
+        function detectMyLocation() {
+            document.getElementById('location-loading').classList.add('show');
+            document.getElementById('location-results').classList.remove('show');
+            clearMap();
+
+            if (!navigator.geolocation) {
+                alert('Geolocation is not supported by your browser');
+                document.getElementById('location-loading').classList.remove('show');
+                return;
+            }
+
+            navigator.geolocation.getCurrentPosition(
+                async (position) => {
+                    const lat = position.coords.latitude;
+                    const lng = position.coords.longitude;
+
+                    myCurrentLocation = { lat, lng };
+
+                    // Reverse geocode using Mappls Plugin
+                    mappls.rev_geocode({ lat: lat, lng: lng }, function (data) {
+                        document.getElementById('location-loading').classList.remove('show');
+                        if (data && data.results && data.results.length > 0) {
+                            const address = data.results[0].formatted_address;
+                            document.getElementById('my-address').textContent = address;
+                            document.getElementById('my-coords').textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+
+                            // Add special marker for current location
+                            if (myLocationMarker) {
+                                map.removeLayer(myLocationMarker);
+                            }
+
+                            myLocationMarker = new mappls.Marker({
+                                map: map,
+                                position: { lat: lat, lng: lng },
+                                icon: 'https://maps.google.com/mapfiles/ms/icons/blue-dot.png',
+                                popupHtml: '📍 You are here!'
+                            });
+
+                            map.setCenter({ lat: lat, lng: lng });
+                            map.setZoom(15);
+                            document.getElementById('location-results').classList.add('show');
+                        } else {
+                            document.getElementById('my-address').textContent = 'Address not found';
+                            document.getElementById('my-coords').textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+                            document.getElementById('location-results').classList.add('show');
+                        }
+                    });
+                },
+                (error) => {
+                    document.getElementById('location-loading').classList.remove('show');
+                    alert('Unable to detect location: ' + error.message);
+                }
+            );
+        }
+
+        function findNearMyLocation() {
+            if (!myCurrentLocation) {
+                alert('Please detect your location first');
+                return;
+            }
+
+            const category = document.getElementById('my-location-category').value;
+
+            document.getElementById('my-nearby-loading').classList.add('show');
+            document.getElementById('my-nearby-results').classList.remove('show');
+
+            clearMap();
+
+            mappls.nearby({ keywords: category, refLocation: `${myCurrentLocation.lat},${myCurrentLocation.lng}`, radius: 5000 }, function (data) {
+                document.getElementById('my-nearby-loading').classList.remove('show');
+                if (data && data.suggestedLocations) {
+                    displayMyNearbyResults(data.suggestedLocations);
+                } else {
+                    displayMyNearbyResults([]);
+                }
+            });
+        }
+
+        function displayMyNearbyResults(places) {
+            const list = document.getElementById('my-nearby-list');
+            list.innerHTML = '';
+
+            if (places.length === 0) {
+                list.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 2rem;">No places found nearby</div>';
+                document.getElementById('my-nearby-results').classList.add('show');
+                return;
+            }
+
+            places.slice(0, 15).forEach((place, index) => {
+                const lat = parseFloat(place.latitude);
+                const lng = parseFloat(place.longitude);
+
+                const distance = calculateDistance(
+                    myCurrentLocation.lat,
+                    myCurrentLocation.lng,
+                    lat,
+                    lng
+                );
+
+                const marker = new mappls.Marker({
+                    map: map,
+                    position: { lat: lat, lng: lng },
+                    popupHtml: `<strong>${place.placeName}</strong><br>${place.placeAddress || ''}<br><em>${distance.toFixed(2)} km away</em>`
+                });
+
+                markers.push(marker);
+
+                const div = document.createElement('div');
+                div.className = 'poi-card';
+                div.style.cursor = 'pointer';
+                div.innerHTML = `
+                    <div style="display: flex; align-items: flex-start; gap: 1rem;">
+                        <div style="background: linear-gradient(135deg, #FF006E, #B537F2); color: white; border-radius: 50%; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; flex-shrink: 0;">${index + 1}</div>
+                        <div style="flex: 1;">
+                            <div class="poi-name">${place.placeName}</div>
+                            <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem;">${place.placeAddress || 'Address not available'}</div>
+                            <div class="poi-distance" style="margin-top: 0.5rem;">📍 ${distance.toFixed(2)} km away</div>
+                        </div>
+                    </div>
+                `;
+
+                div.onclick = () => {
+                    map.setCenter({ lat: lat, lng: lng });
+                    map.setZoom(17);
+                };
+
+                list.appendChild(div);
+            });
+
+            document.getElementById('my-nearby-results').classList.add('show');
+        }
+
+        // 1. AUTOSUGGEST
+        let suggestTimeout;
+        function handleAutosuggest(query) {
+            clearTimeout(suggestTimeout);
+
+            if (query.length < 2) {
+                document.getElementById('suggestions').classList.remove('show');
+                return;
+            }
+
+            suggestTimeout = setTimeout(() => {
+                mappls.search(query, function (data) {
+                    if (data && data.suggestedLocations) {
+                        displaySuggestions(data.suggestedLocations);
+                    }
+                });
+            }, 300);
+        }
+
+        function displaySuggestions(suggestions) {
+            const dropdown = document.getElementById('suggestions');
+            dropdown.innerHTML = '';
+
+            if (suggestions.length === 0) {
+                dropdown.classList.remove('show');
+                return;
+            }
+
+            suggestions.slice(0, 8).forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'suggestion-item';
+                div.innerHTML = `
+                    <div class="suggestion-name">${item.placeName || item.placeAddress}</div>
+                    <div class="suggestion-address">${item.placeAddress || ''}</div>
+                `;
+                div.onclick = () => selectSuggestion(item);
+                dropdown.appendChild(div);
+            });
+
+            dropdown.classList.add('show');
+        }
+
+        function selectSuggestion(item) {
+            document.getElementById('search-query').value = item.placeName || item.placeAddress;
+            document.getElementById('suggestions').classList.remove('show');
+
+            clearMap();
+            const lat = parseFloat(item.latitude);
+            const lng = parseFloat(item.longitude);
+
+            const marker = new mappls.Marker({
+                map: map,
+                position: { lat: lat, lng: lng },
+                popupHtml: item.placeName || item.placeAddress
+            });
+            markers.push(marker);
+            map.setCenter({ lat: lat, lng: lng });
+            map.setZoom(15);
+        }
+
+        // 2. GEOCODING
+        function geocodeAddress() {
+            const address = document.getElementById('geocode-address').value;
+            if (!address) {
+                alert('Please enter an address');
+                return;
+            }
+
+            document.getElementById('geocode-loading').classList.add('show');
+            document.getElementById('geocode-results').classList.remove('show');
+            clearMap();
+
+            mappls.search(address, function (data) {
+                document.getElementById('geocode-loading').classList.remove('show');
+                if (data && data.suggestedLocations && data.suggestedLocations.length > 0) {
+                    const result = data.suggestedLocations[0];
+                    const lat = parseFloat(result.latitude);
+                    const lng = parseFloat(result.longitude);
+
+                    document.getElementById('geo-lat').textContent = lat.toFixed(6);
+                    document.getElementById('geo-lng').textContent = lng.toFixed(6);
+                    document.getElementById('geo-address').textContent = result.placeAddress || address;
+
+                    const marker = new mappls.Marker({
+                        map: map,
+                        position: { lat: lat, lng: lng },
+                        popupHtml: result.placeAddress
+                    });
+                    markers.push(marker);
+                    map.setCenter({ lat: lat, lng: lng });
+                    map.setZoom(15);
+
+                    document.getElementById('geocode-results').classList.add('show');
+                }
+            });
+        }
+
+        // 3. REVERSE GEOCODING
+        function reverseGeocode() {
+            const lat = parseFloat(document.getElementById('reverse-lat').value);
+            const lng = parseFloat(document.getElementById('reverse-lng').value);
+
+            if (isNaN(lat) || isNaN(lng)) {
+                alert('Please enter coordinates');
+                return;
+            }
+
+            document.getElementById('reverse-loading').classList.add('show');
+            document.getElementById('reverse-results').classList.remove('show');
+            clearMap();
+
+            mappls.rev_geocode({ lat: lat, lng: lng }, function (data) {
+                document.getElementById('reverse-loading').classList.remove('show');
+                if (data && data.results && data.results.length > 0) {
+                    const address = data.results[0].formatted_address;
+                    document.getElementById('reverse-address').textContent = address;
+
+                    const marker = new mappls.Marker({
+                        map: map,
+                        position: { lat: lat, lng: lng },
+                        popupHtml: address
+                    });
+                    markers.push(marker);
+                    map.setCenter({ lat: lat, lng: lng });
+                    map.setZoom(15);
+
+                    document.getElementById('reverse-results').classList.add('show');
+                }
+            });
+        }
+
+        // 4. NEARBY PLACES
+        function findNearbyPlaces() {
+            const location = document.getElementById('nearby-location').value;
+            const keyword = document.getElementById('nearby-keyword').value;
+
+            if (!location || !keyword) {
+                alert('Please enter location and keyword');
+                return;
+            }
+
+            document.getElementById('nearby-loading').classList.add('show');
+            document.getElementById('nearby-results').classList.remove('show');
+            clearMap();
+
+            mappls.search(location, function (data) {
+                if (data && data.suggestedLocations && data.suggestedLocations.length > 0) {
+                    const lat = parseFloat(data.suggestedLocations[0].latitude);
+                    const lng = parseFloat(data.suggestedLocations[0].longitude);
+
+                    mappls.nearby({ keywords: keyword, refLocation: `${lat},${lng}` }, function (nearbyData) {
+                        document.getElementById('nearby-loading').classList.remove('show');
+                        if (nearbyData && nearbyData.suggestedLocations) {
+                            displayNearbyResults(nearbyData.suggestedLocations, lat, lng);
+                        }
+                    });
+                } else {
+                    document.getElementById('nearby-loading').classList.remove('show');
+                    alert('Location not found');
+                }
+            });
+        }
+
+        function displayNearbyResults(places, centerLat, centerLng) {
+            const list = document.getElementById('nearby-list');
+            list.innerHTML = '';
+
+            const centerMarker = new mappls.Marker({
+                map: map,
+                position: { lat: centerLat, lng: centerLng },
+                icon: 'https://maps.google.com/mapfiles/ms/icons/blue-dot.png'
+            });
+            markers.push(centerMarker);
+
+            places.slice(0, 10).forEach(place => {
+                const lat = parseFloat(place.latitude);
+                const lng = parseFloat(place.longitude);
+
+                const marker = new mappls.Marker({
+                    map: map,
+                    position: { lat: lat, lng: lng },
+                    popupHtml: place.placeName
+                });
+                markers.push(marker);
+
+                const div = document.createElement('div');
+                div.className = 'poi-card';
+                div.innerHTML = `
+                    <div class="poi-name">${place.placeName}</div>
+                    <div class="poi-distance">${place.distance ? (place.distance / 1000).toFixed(2) + ' km' : ''}</div>
+                `;
+                list.appendChild(div);
+            });
+
+            map.setCenter({ lat: centerLat, lng: centerLng });
+            document.getElementById('nearby-results').classList.add('show');
+        }
+
+        // 5. ROUTING
+        function calculateRoute() {
+            const origin = document.getElementById('route-origin').value;
+            const dest = document.getElementById('route-dest').value;
+
+            if (!origin || !dest) {
+                alert('Please enter both origin and destination');
+                return;
+            }
+
+            document.getElementById('route-loading').classList.add('show');
+            document.getElementById('route-results').classList.remove('show');
+            clearMap();
+
+            mappls.direction({ origin: origin, destination: dest }, function (data) {
+                document.getElementById('route-loading').classList.remove('show');
+                if (data && data.routes && data.routes.length > 0) {
+                    const route = data.routes[0];
+                    const distance = (route.distance / 1000).toFixed(2);
+                    const duration = Math.round(route.duration / 60);
+
+                    document.getElementById('route-distance').textContent = distance + ' km';
+                    document.getElementById('route-duration').textContent = duration + ' min';
+                    document.getElementById('route-results').classList.add('show');
+
+                    // Route is automatically drawn by the plugin if using default settings, 
+                    // but we can manually handle it if needed.
+                } else {
+                    alert('Could not find route');
+                }
+            });
+        }
+
+        // 6. DISTANCE MATRIX
+        function calculateMatrix() {
+            const originsText = document.getElementById('matrix-origins').value;
+            const destinationsText = document.getElementById('matrix-destinations').value;
+
+            if (!originsText || !destinationsText) {
+                alert('Please enter origins and destinations');
+                return;
+            }
+
+            document.getElementById('matrix-loading').classList.add('show');
+            document.getElementById('matrix-results').classList.remove('show');
+            clearMap();
+
+            const output = document.getElementById('matrix-output');
+            output.innerHTML = '<h3 style="color: var(--neon-blue); margin-bottom: 1rem;">Distance Matrix (km)</h3>';
+
+            // Use Search to geocode and then manual matrix for reliability
+            mappls.search(originsText, function (oData) {
+                mappls.search(destinationsText, function (dData) {
+                    document.getElementById('matrix-loading').classList.remove('show');
+                    if (oData && oData.suggestedLocations && dData && dData.suggestedLocations) {
+                        const o = oData.suggestedLocations[0];
+                        const d = dData.suggestedLocations[0];
+                        const dist = calculateDistance(o.latitude, o.longitude, d.latitude, d.longitude);
+
+                        output.innerHTML += `
+                            <div class="result-item">
+                                <span class="result-label">${o.placeName} → ${d.placeName}</span>
+                                <span class="result-value">${dist.toFixed(2)} km</span>
+                            </div>
+                         `;
+
+                        new mappls.Marker({ map: map, position: { lat: o.latitude, lng: o.longitude } });
+                        new mappls.Marker({ map: map, position: { lat: d.latitude, lng: d.longitude } });
+                        document.getElementById('matrix-results').classList.add('show');
+                    }
+                });
+            });
+        }
+
+        // 7. POI ALONG ROUTE
+        function findPOIAlongRoute() {
+            const origin = document.getElementById('poi-origin').value;
+            const dest = document.getElementById('poi-dest').value;
+            const category = document.getElementById('poi-category').value;
+
+            if (!origin || !dest) {
+                alert('Please enter route start and end');
+                return;
+            }
+
+            document.getElementById('poi-loading').classList.add('show');
+            document.getElementById('poi-results').classList.remove('show');
+            clearMap();
+
+            mappls.direction({ origin: origin, destination: dest }, function (data) {
+                if (data && data.routes && data.routes.length > 0) {
+                    // Get midpoint for demo
+                    const route = data.routes[0];
+                    const lat = (route.start_location.lat + route.end_location.lat) / 2;
+                    const lng = (route.start_location.lng + route.end_location.lng) / 2;
+
+                    mappls.nearby({ keywords: category, refLocation: `${lat},${lng}` }, function (nearbyData) {
+                        document.getElementById('poi-loading').classList.remove('show');
+                        if (nearbyData && nearbyData.suggestedLocations) {
+                            displayPOIResults(nearbyData.suggestedLocations);
+                        }
+                    });
+                }
+            });
+        }
+
+        function displayPOIResults(pois) {
+            const output = document.getElementById('poi-output');
+            output.innerHTML = '';
+
+            pois.slice(0, 10).forEach(poi => {
+                const lat = parseFloat(poi.latitude);
+                const lng = parseFloat(poi.longitude);
+
+                const marker = new mappls.Marker({
+                    map: map,
+                    position: { lat: lat, lng: lng },
+                    icon: 'https://maps.google.com/mapfiles/ms/icons/red-dot.png'
+                });
+                markers.push(marker);
+
+                const div = document.createElement('div');
+                div.className = 'poi-card';
+                div.innerHTML = `
+                    <div class="poi-name">${poi.placeName}</div>
+                    <div class="poi-distance">${poi.placeAddress || ''}</div>
+                `;
+                output.appendChild(div);
+            });
+
+            document.getElementById('poi-results').classList.add('show');
+        }
+
+        // Helper Functions
+        function geocodeLocation(address, callback) {
+            mappls.search(address, function (data) {
+                if (data && data.suggestedLocations && data.suggestedLocations.length > 0) {
+                    callback({
+                        lat: parseFloat(data.suggestedLocations[0].latitude),
+                        lng: parseFloat(data.suggestedLocations[0].longitude)
+                    });
+                } else {
+                    alert('Location not found: ' + address);
+                }
+            });
+        }
+
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371; // Earth's radius in km
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return R * c;
+        }
+
+        // Close suggestions when clicking outside
+        document.addEventListener('click', function (e) {
+            if (!e.target.closest('.input-group')) {
+                document.getElementById('suggestions').classList.remove('show');
+            }
+        });
+    </script>
+</body>
+
+</html>
