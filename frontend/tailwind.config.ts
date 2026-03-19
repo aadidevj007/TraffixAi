@@ -38,8 +38,9 @@ const config: Config = {
         },
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
-        display: ['Space Grotesk', 'sans-serif'],
+        sans: ['var(--font-lora)', 'Lora', 'serif'],
+        display: ['var(--font-lora)', 'Lora', 'serif'],
+        brand: ['var(--font-lora)', 'Lora', 'serif'],
         mono: ['JetBrains Mono', 'monospace'],
       },
       animation: {

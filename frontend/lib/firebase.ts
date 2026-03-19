@@ -20,13 +20,12 @@ const hasFirebaseConfig = Boolean(
     firebaseConfig.appId
 );
 
-// Prevent build-time crashes when env vars are missing on server/prerender.
-const canInit = hasFirebaseConfig || typeof window !== 'undefined';
-const app = canInit
+const app = hasFirebaseConfig
     ? (getApps().length === 0 ? initializeApp(firebaseConfig) : getApp())
     : null;
 
-export const auth = app ? getAuth(app) : ({} as ReturnType<typeof getAuth>);
-export const db = app ? getFirestore(app) : ({} as ReturnType<typeof getFirestore>);
-export const storage = app ? getStorage(app) : ({} as ReturnType<typeof getStorage>);
+export const firebaseEnabled = hasFirebaseConfig;
+export const auth = app ? getAuth(app) : null;
+export const db = app ? getFirestore(app) : null;
+export const storage = app ? getStorage(app) : null;
 export default app;

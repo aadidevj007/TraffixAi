@@ -4,9 +4,10 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { Mail, Lock, Activity, Eye, EyeOff, User, Phone, ArrowRight, Shield } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, User, Phone, ArrowRight, Shield } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import toast from 'react-hot-toast';
+import BrandLogo from '@/components/layout/BrandLogo';
 
 type SignupRole = 'User' | 'Admin' | 'Authority';
 
@@ -56,12 +57,7 @@ export default function SignupPage() {
                 className="w-full max-w-md relative z-10"
             >
                 <div className="text-center mb-8">
-                    <Link href="/" className="inline-flex items-center gap-2 mb-6">
-                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center shadow-glow-cyan">
-                            <Activity className="w-5 h-5 text-white" />
-                        </div>
-                        <span className="text-2xl font-display font-bold gradient-text">TraffixAI</span>
-                    </Link>
+                    <BrandLogo href="/" size="md" className="mb-6" />
                     <h1 className="text-3xl font-display font-bold text-white mb-2">Create Account</h1>
                     <p className="text-slate-400">Join the intelligent traffic management platform</p>
                 </div>

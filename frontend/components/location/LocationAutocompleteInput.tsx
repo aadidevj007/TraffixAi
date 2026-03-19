@@ -33,6 +33,7 @@ export default function LocationAutocompleteInput({
     const [activeIndex, setActiveIndex] = useState(-1);
     const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const suppressNextLookup = useRef(false);
 
     useEffect(() => {
         setQuery(value);
@@ -49,6 +50,12 @@ export default function LocationAutocompleteInput({
         if (debounceTimer.current) clearTimeout(debounceTimer.current);
         const controller = new AbortController();
         debounceTimer.current = setTimeout(async () => {
+            if (suppressNextLookup.current) {
+                suppressNextLookup.current = false;
+                setSuggestions([]);
+                setOpen(false);
+                return;
+            }
             const q = query.trim();
             if (!q) {
                 setSuggestions([]);
@@ -93,8 +100,10 @@ export default function LocationAutocompleteInput({
     }, [query]);
 
     const select = (name: string) => {
+        suppressNextLookup.current = true;
         onChange(name);
         setQuery(name);
+        setSuggestions([]);
         setOpen(false);
         setActiveIndex(-1);
     };

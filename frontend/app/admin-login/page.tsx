@@ -3,13 +3,27 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
-import { Activity, ArrowLeft, ShieldAlert, Eye, EyeOff } from 'lucide-react';
+import { ArrowLeft, ShieldAlert, Eye, EyeOff } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuth } from '@/contexts/AuthContext';
+import BrandLogo from '@/components/layout/BrandLogo';
 
-// Local hardcoded admin credentials (bypass Firebase for quick access)
-const LOCAL_ADMIN_USER = 'admin';
-const LOCAL_ADMIN_PASS = 'admin@1234';
+const LOCAL_ADMIN_CRED_KEY = 'traffixai_local_admin_credentials';
+const DEFAULT_LOCAL_ADMIN = { username: 'admin', password: 'admin@1234' };
+
+function getLocalAdminCredentials() {
+    if (typeof window === 'undefined') return DEFAULT_LOCAL_ADMIN;
+    try {
+        const raw = localStorage.getItem(LOCAL_ADMIN_CRED_KEY);
+        if (!raw) return DEFAULT_LOCAL_ADMIN;
+        const parsed = JSON.parse(raw) as { username?: string; password?: string };
+        const username = (parsed.username || '').trim() || DEFAULT_LOCAL_ADMIN.username;
+        const password = (parsed.password || '').trim() || DEFAULT_LOCAL_ADMIN.password;
+        return { username, password };
+    } catch {
+        return DEFAULT_LOCAL_ADMIN;
+    }
+}
 
 export default function AdminLoginPage() {
     const [username, setUsername] = useState('');
@@ -22,8 +36,9 @@ export default function AdminLoginPage() {
         e.preventDefault();
         setLoading(true);
         try {
+            const creds = getLocalAdminCredentials();
             // ── Local admin bypass ──────────────────────────────────────
-            if (username === LOCAL_ADMIN_USER && password === LOCAL_ADMIN_PASS) {
+            if (username === creds.username && password === creds.password) {
                 // Store a local session flag so the app treats this user as Admin
                 sessionStorage.setItem('localAdmin', 'true');
                 toast.success('Admin access granted');
@@ -35,7 +50,7 @@ export default function AdminLoginPage() {
             await adminLogin(username, password);
             toast.success('Admin access granted');
         } catch {
-            toast.error('Invalid admin credentials. Use admin / admin@1234');
+            toast.error('Invalid admin credentials');
         } finally {
             setLoading(false);
         }
@@ -55,14 +70,9 @@ export default function AdminLoginPage() {
                 </Link>
 
                 <div className="text-center mb-8">
-                    <Link href="/" className="inline-flex items-center gap-2 mb-4">
-                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-red-500 to-orange-600 flex items-center justify-center">
-                            <Activity className="w-5 h-5 text-white" />
-                        </div>
-                        <span className="text-2xl font-display font-bold gradient-text">TraffixAI</span>
-                    </Link>
+                    <BrandLogo href="/" size="md" className="mb-4" />
                     <h1 className="text-3xl font-display font-bold text-white mb-2">Admin Login</h1>
-                    <p className="text-slate-400 text-sm">Username: <code className="text-cyan-400">admin</code> · Password: <code className="text-cyan-400">admin@1234</code></p>
+                    <p className="text-slate-400 text-sm">Sign in with local admin username and password.</p>
                 </div>
 
                 <div className="glass-card p-8 border border-red-500/20">
@@ -71,7 +81,7 @@ export default function AdminLoginPage() {
                             type="text"
                             value={username}
                             onChange={(e) => setUsername(e.target.value)}
-                            placeholder="Username or Email"
+                            placeholder="Username"
                             className="input-field"
                             autoComplete="username"
                             required

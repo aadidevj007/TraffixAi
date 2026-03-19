@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import AIDashboard from './AIDashboard';
+import TrafficLawAssistant from './TrafficLawAssistant';
 
 export default function ImageAnalysis() {
     const [file, setFile] = useState(null);
@@ -167,6 +168,11 @@ export default function ImageAnalysis() {
                             totalViolations={totalViols}
                         />
                     )}
+                    <TrafficLawAssistant
+                        stats={result?.stats}
+                        violations={result?.violations || []}
+                        accidents={result?.accidents || []}
+                    />
                 </div>
             )}
         </div>

@@ -1,7 +1,7 @@
 /*
   TraffixAI MongoDB Schema/Indexes
   Usage:
-    mongosh "mongodb://127.0.0.1:27017/traffixai" database/mongodb_schema.js
+    mongosh "mongodb+srv://<username>:<password>@<cluster>.mongodb.net/traffixai?retryWrites=true&w=majority" database/mongodb_schema.js
 */
 
 const dbName = "traffixai";

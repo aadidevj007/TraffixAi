@@ -1,0 +1,22 @@
+[
+  {
+    "title": "Speeding Violations",
+    "text": "Exceeding the speed limit in a residential area is a primary traffic violation. Penalties typically include a fine ranging from $150 to $500 depending on the severity of the excess speed. If the speed is more than 30mph over the limit, it may result in an automatic license suspension for 30 days."
+  },
+  {
+    "title": "Running Red Lights",
+    "text": "A motor vehicle must come to a complete stop at a red light. Failure to do so is a violation of the Road Traffic Act Section 14. This usually results in a 3-point penalty on the driver's license and a standard fine of $250. Repeat offenses within 24 months lead to higher fines."
+  },
+  {
+    "title": "Seat Belt Compliance",
+    "text": "All passengers in a moving vehicle must wear a properly adjusted seat belt. In the case of children under 12, the driver is legally responsible for ensuring the child is in an appropriate safety seat. Failure to comply can lead to a $100 fine per unbelted passenger."
+  },
+  {
+    "title": "DUI Regulations",
+    "text": "Operating a vehicle with a Blood Alcohol Content (BAC) of 0.08% or higher is strictly prohibited. For commercial drivers, the limit is 0.04%. First-time offenders face license suspension, mandatory alcohol education programs, and fines up to $2000."
+  },
+  {
+    "title": "Lane Discipline",
+    "text": "Drivers should keep to the right lane unless overtaking. Frequent lane changes without signaling is considered aggressive driving and can be cited as such. On highways, the far left lane is reserved for high-occupancy vehicles or emergency passing."
+  }
+]

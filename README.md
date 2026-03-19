@@ -80,15 +80,15 @@ Create `backend/.env`:
 ```env
 PORT=8000
 CORS_ORIGINS=http://localhost:3000
-MONGODB_URI=mongodb://127.0.0.1:27017
+MONGODB_URI=mongodb+srv://<username>:<password>@<cluster>.mongodb.net/?retryWrites=true&w=majority
 MONGODB_DB=traffixai
 FIREBASE_CREDENTIALS_PATH=../firebase/serviceAccountKey.json
-YOLO_MODEL_PATH=./yolov8n.pt
+YOLO_MODEL_PATH=./models/accident_model.pt
 ```
 
 ### 3. MongoDB schema
 ```bash
-mongosh "mongodb://127.0.0.1:27017/traffixai" ../database/mongodb_schema.js
+mongosh "mongodb+srv://<username>:<password>@<cluster>.mongodb.net/traffixai?retryWrites=true&w=majority" ../database/mongodb_schema.js
 ```
 
 ### 4. Run

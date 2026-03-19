@@ -46,8 +46,13 @@ def risk_to_color(score: float) -> str:
 class TrafficMonitor:
     def __init__(self, model_path=None, conf_threshold=0.4):
         if model_path is None:
-            # Default: ai_models/yolov8n.pt relative to this file
-            model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'yolov8n.pt')
+            # Default to backend/models/accident_model.pt when available.
+            model_dir = os.path.dirname(os.path.abspath(__file__))
+            candidates = [
+                os.path.join(model_dir, "..", "backend", "models", "accident_model.pt"),
+                os.path.join(model_dir, "yolov8n.pt"),
+            ]
+            model_path = next((p for p in candidates if os.path.exists(p)), candidates[-1])
         self.model = YOLO(model_path)
         self.track_history = defaultdict(lambda: deque(maxlen=60))
         self.velocity_history = defaultdict(lambda: deque(maxlen=20))
@@ -536,7 +541,12 @@ class AccidentDetector:
 
     def __init__(self, model_path: str = None):
         if model_path is None:
-            model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'yolov8n.pt')
+            model_dir = os.path.dirname(os.path.abspath(__file__))
+            candidates = [
+                os.path.join(model_dir, "..", "backend", "models", "accident_model.pt"),
+                os.path.join(model_dir, "yolov8n.pt"),
+            ]
+            model_path = next((p for p in candidates if os.path.exists(p)), candidates[-1])
         self.monitor = TrafficMonitor(model_path=model_path)
         self.model = self.monitor.model  # Exposed for health checks
         logger.info(f"Loaded custom YOLO model: {model_path}")
@@ -608,8 +618,13 @@ class AccidentDetector:
 
             # Use a fresh monitor for each video for clean tracking state.
             # Lower confidence + relaxed accident thresholds improve crash capture.
-            video_monitor = TrafficMonitor(model_path=os.path.join(
-                os.path.dirname(os.path.abspath(__file__)), 'yolov8n.pt'), conf_threshold=0.25)
+            model_dir = os.path.dirname(os.path.abspath(__file__))
+            video_candidates = [
+                os.path.join(model_dir, "..", "backend", "models", "accident_model.pt"),
+                os.path.join(model_dir, "yolov8n.pt"),
+            ]
+            video_model_path = next((p for p in video_candidates if os.path.exists(p)), video_candidates[-1])
+            video_monitor = TrafficMonitor(model_path=video_model_path, conf_threshold=0.25)
             video_monitor.accident_iou_threshold = 0.25
             video_monitor.accident_decel_threshold = 0.8
 

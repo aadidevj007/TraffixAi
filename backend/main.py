@@ -1,20 +1,29 @@
 from __future__ import annotations
 
+import asyncio
+import base64
+import json
+import math
 import os
 import re
+import smtplib
 import uuid
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
+from email.message import EmailMessage
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import quote_plus
 
 import cv2
+import httpx
 import numpy as np
 from bson import ObjectId
+from bson.errors import InvalidDocument
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from pymongo import MongoClient
 from pymongo.collection import Collection
@@ -22,10 +31,18 @@ from pymongo.collection import Collection
 import firebase_admin
 from firebase_admin import auth as firebase_auth
 from firebase_admin import credentials
+try:
+    from twilio.base.exceptions import TwilioException
+    from twilio.rest import Client as TwilioClient
+except Exception:  # pragma: no cover - optional dependency fallback
+    TwilioException = Exception
+    TwilioClient = None
 
+from ai.llm_judge import LLMJudge
 from ai.traffic_monitor import TrafficMonitor
 
-load_dotenv()
+BACKEND_DIR = Path(__file__).resolve().parent
+load_dotenv(BACKEND_DIR / ".env")
 
 
 def now_iso() -> str:
@@ -38,6 +55,61 @@ def serialize_id(doc: dict[str, Any]) -> dict[str, Any]:
         out["id"] = str(out["_id"])
         del out["_id"]
     return out
+
+
+def _sanitize_for_mongo(value: Any) -> Any:
+    """Recursively convert numpy scalars/arrays into plain Python types."""
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.floating):
+        value = float(value)
+        return value if math.isfinite(value) else 0.0
+    if isinstance(value, np.bool_):
+        return bool(value)
+    if isinstance(value, np.generic):
+        value = value.item()
+        if isinstance(value, float):
+            return value if math.isfinite(value) else 0.0
+        return value
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, dict):
+        cleaned: dict[Any, Any] = {}
+        for k, v in value.items():
+            clean_k = _sanitize_for_mongo(k)
+            if not isinstance(clean_k, (str, int, float, bool)):
+                clean_k = str(clean_k)
+            cleaned[clean_k] = _sanitize_for_mongo(v)
+        return cleaned
+    if isinstance(value, set):
+        return [_sanitize_for_mongo(v) for v in value]
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_for_mongo(v) for v in value]
+    if isinstance(value, float):
+        return value if math.isfinite(value) else 0.0
+    return value
+
+
+def _safe_box_coords(box: Any, default: tuple[float, float, float, float] = (0.0, 0.0, 10.0, 10.0)) -> tuple[float, float, float, float]:
+    """Return valid 4-point box coords even when model output is malformed."""
+    if box is None:
+        return default
+    if hasattr(box, "tolist"):
+        box = box.tolist()
+    try:
+        seq = list(box)
+    except Exception:
+        return default
+    if len(seq) < 4:
+        return default
+    try:
+        x1, y1, x2, y2 = float(seq[0]), float(seq[1]), float(seq[2]), float(seq[3])
+    except Exception:
+        return default
+    for val in (x1, y1, x2, y2):
+        if not math.isfinite(val):
+            return default
+    return x1, y1, x2, y2
 
 
 def parse_object_id(raw_id: str) -> ObjectId:
@@ -94,6 +166,32 @@ class RouteSafetyRequest(BaseModel):
     mode: RouteMode = "driving"
 
 
+class LegacyDashboardRequest(BaseModel):
+    stats: dict[str, Any] = {}
+    cumulative: dict[str, Any] = {}
+    violationCounts: dict[str, int] = {}
+    totalViolations: int = 0
+
+
+class LegacyExecutiveSummaryRequest(BaseModel):
+    stats: dict[str, Any] = {}
+    cumulative: dict[str, Any] = {}
+    violationCounts: dict[str, int] = {}
+    totalViolations: int = 0
+    accidents: list[dict[str, Any]] = []
+
+
+class LegacyTrafficLawQueryRequest(BaseModel):
+    question: str
+    incident_context: dict[str, Any] = {}
+
+
+class LegacyTrafficLawAnalysisRequest(BaseModel):
+    stats: dict[str, Any] = {}
+    violations: list[dict[str, Any] | str] = []
+    accidents: list[dict[str, Any]] = []
+
+
 app = FastAPI(
     title="TraffixAI Backend",
     version="2.0.0",
@@ -108,19 +206,45 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = BACKEND_DIR
+PROJECT_ROOT = BASE_DIR.parent
 UPLOAD_DIR = BASE_DIR / "uploads"
 PROCESSED_DIR = BASE_DIR / "processed"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
+app.mount("/processed", StaticFiles(directory=str(PROCESSED_DIR)), name="processed")
 
-mongo_uri = os.getenv("MONGODB_URI", "mongodb://127.0.0.1:27017")
-mongo_db_name = os.getenv("MONGODB_DB", "traffixai")
+AUTHORITY_EMAIL = os.getenv("AUTHORITY_EMAIL", "aadidevj4047@gmail.com")
+
+mongo_uri = os.getenv("MONGODB_URI")
+if not mongo_uri:
+    raise RuntimeError("MONGODB_URI is required. Set your MongoDB Atlas connection string in backend/.env")
 mongo_client = MongoClient(mongo_uri)
+
+
+def _resolve_mongo_db_name(client: MongoClient, configured_name: str) -> str:
+    """Prefer existing DB casing when Atlas already has the same name with different case."""
+    name = (configured_name or "traffixai").strip()
+    if not name:
+        return "traffixai"
+    try:
+        existing_names = client.list_database_names()
+    except Exception:
+        return name
+    lowered = name.lower()
+    for existing in existing_names:
+        if existing.lower() == lowered:
+            return existing
+    return name
+
+
+mongo_db_name = _resolve_mongo_db_name(mongo_client, os.getenv("MONGODB_DB", "traffixai"))
 mongo_db = mongo_client[mongo_db_name]
 users_col: Collection = mongo_db["users"]
 uploads_col: Collection = mongo_db["uploads"]
 stats_col: Collection = mongo_db["system_stats"]
+alerts_col: Collection = mongo_db["alerts"]
 
 if not stats_col.find_one({"_id": "global"}):
     stats_col.insert_one(
@@ -144,14 +268,41 @@ if not firebase_admin._apps:
         firebase_admin.initialize_app(cred)
 
 # ── TrafficMonitor (replaces old YOLODetector + tracker + velocity + RuleEngine) ──
-_model_path = os.getenv(
-    "YOLO_MODEL_PATH",
-    str(BASE_DIR / "models" / "yolov8n.pt"),
-)
+def _resolve_model_path() -> str:
+    explicit = os.getenv("YOLO_MODEL_PATH") or os.getenv("YOLO_WEIGHTS_PATH")
+    if explicit and Path(explicit).exists():
+        return explicit
+
+    # Prefer a general detector by default; accident-only models are too narrow
+    # for full traffic analytics (vehicles/persons/violations).
+    candidates = [
+        BASE_DIR / "models" / "yolov8n.pt",
+        BASE_DIR / "models" / "accident_model.pt",
+        PROJECT_ROOT / "traffic_models" / "yolov8n.pt",
+        PROJECT_ROOT / "traffic_models" / "YOLO-Weights" / "best-versi-1.pt",
+        PROJECT_ROOT / "traffic_models" / "YOLO-Weights" / "yolov8m-dataset-7000-300.pt",
+        PROJECT_ROOT / "traffic_models" / "YOLO-Weights" / "yolov8s-100.pt",
+        PROJECT_ROOT / "traffic" / "yolov8n.pt",
+        PROJECT_ROOT / "traffic" / "YOLO-Weights" / "best-versi-1.pt",
+        PROJECT_ROOT / "traffic" / "YOLO-Weights" / "yolov8m-dataset-7000-300.pt",
+        PROJECT_ROOT / "traffic" / "YOLO-Weights" / "yolov8s-100.pt",
+        PROJECT_ROOT / "yolov8n.pt",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    # Last fallback
+    return str(BASE_DIR / "models" / "accident_model.pt")
+
+
+_model_path = _resolve_model_path()
 monitor = TrafficMonitor(
     model_path=_model_path,
-    conf_threshold=float(os.getenv("CONF_THRESHOLD", "0.4")),
+    conf_threshold=float(os.getenv("CONF_THRESHOLD", "0.25")),
 )
+llm_judge = LLMJudge()
+legacy_video_store: dict[str, str] = {}
+_law_corpus_cache: list[dict[str, Any]] | None = None
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────────
@@ -182,6 +333,259 @@ def _risk_score(violations: int, accidents: int, density: int) -> dict[str, Any]
     return {"score": score, "level": level}
 
 
+VIOLATION_FINE_MAP: dict[str, dict[str, str]] = {
+    "No Helmet": {
+        "fine": "INR 1,000 (1st offence); INR 2,000 + 3-month licence suspension (repeat)",
+        "law": "MV Act Section 129 & 194D",
+        "ipc": "IPC Section 304A (if accident caused) — Culpable homicide not amounting to murder",
+        "jail": "Up to 2 years imprisonment if accident results in death; 6 months for repeat offence",
+        "consequence": "Licence suspended for 3 months on repeat. If accident occurs without helmet, rider is held contributorily negligent reducing insurance claim.",
+    },
+    "Speeding": {
+        "fine": "INR 1,000–2,000; INR 4,000 for LMV/HMV",
+        "law": "MV Act Section 183",
+        "ipc": "IPC Section 304A — Causing death by negligence; IPC Section 279 — Rash driving",
+        "jail": "IPC 279: Up to 6 months OR fine up to INR 1,000 or both. IPC 304A: Up to 2 years if death results",
+        "consequence": "Community service order possible. Repeated speeding leads to permanent licence cancellation under Section 19 MV Act.",
+    },
+    "Wrong Way": {
+        "fine": "INR 5,000",
+        "law": "MV Act Section 177 & 184",
+        "ipc": "IPC Section 279 (rash driving) & IPC Section 338 (grievous hurt by act endangering life)",
+        "jail": "IPC 338: Up to 2 years + fine. IPC 279: Up to 6 months + fine",
+        "consequence": "Vehicle may be impounded for 30 days. Licence suspended pending court ruling under dangerous driving provisions.",
+    },
+    "Signal Jump": {
+        "fine": "INR 1,000–5,000",
+        "law": "MV Act Section 119 & 177",
+        "ipc": "IPC Section 279 — Rash driving on public way; IPC Section 304A if death occurs",
+        "jail": "Up to 6 months + fine (IPC 279). Up to 2 years (IPC 304A if death results)",
+        "consequence": "Court summons issued. Insurance invalidated during accident if signal-jump proven.",
+    },
+    "No Seatbelt": {
+        "fine": "INR 1,000",
+        "law": "MV Act Section 194B",
+        "ipc": "IPC Section 304A read with 304 if recklessness proven in accident context",
+        "jail": "No direct imprisonment for offence itself; 2 years if recklessness contributes to death",
+        "consequence": "Contributory negligence in accident reduces insurance payout. Repeat offenders face challan and court appearance.",
+    },
+    "Excess Riders": {
+        "fine": "INR 2,000 + INR 1,000 per additional passenger",
+        "law": "MV Act Section 194C",
+        "ipc": "IPC Section 304A if overloading contributes to accident causing death",
+        "jail": "Up to 2 years under IPC 304A if accident with fatality",
+        "consequence": "Vehicle impounded. Driver licence suspended. Passenger also liable for abetment.",
+    },
+    "Lane Change": {
+        "fine": "INR 500–1,000",
+        "law": "MV Act Section 177",
+        "ipc": "IPC Section 279 for rash lane cutting; IPC 338 for causing grievous hurt",
+        "jail": "Up to 6 months (IPC 279) or 2 years (IPC 338)",
+        "consequence": "Repeated lane violations result in defensive driving course mandate by court.",
+    },
+    "Jaywalking": {
+        "fine": "INR 100–500",
+        "law": "State Traffic Rules & IPC Section 283",
+        "ipc": "IPC Section 283 — Danger or obstruction in public way",
+        "jail": "Fine of INR 200 or up to 1 month simple imprisonment under IPC 283",
+        "consequence": "Police warning slip issued. Repeat pedestrian offences may lead to community service.",
+    },
+    "Tailgating": {
+        "fine": "INR 1,000",
+        "law": "MV Act Section 184",
+        "ipc": "IPC Section 279 — Rash or negligent driving",
+        "jail": "Up to 6 months + fine under IPC 279; Up to 2 years under IPC 304A if death results",
+        "consequence": "Considered dangerous driving. Licence liable for suspension on repeat.",
+    },
+    "Red Light": {
+        "fine": "INR 1,000–5,000",
+        "law": "MV Act Section 119 & 177",
+        "ipc": "IPC Section 279 & 304A if accident caused",
+        "jail": "6 months to 2 years depending on consequences of the violation",
+        "consequence": "Traffic camera evidence used in court. Insurance company can deny claims for red-light violations.",
+    },
+    "Illegal U-Turn": {
+        "fine": "INR 500–1,000",
+        "law": "MV Act Section 177",
+        "ipc": "IPC Section 279 if rash / endangering others",
+        "jail": "Up to 6 months + fine (IPC 279)",
+        "consequence": "Challan recorded on digital VAHAN portal. Repeated violations flagged for enforcement action.",
+    },
+    "Stopped Vehicle": {
+        "fine": "INR 500",
+        "law": "MV Act Section 122 & 177",
+        "ipc": "IPC Section 283 — Danger or obstruction on public road",
+        "jail": "Up to 1 month simple imprisonment + fine under IPC 283",
+        "consequence": "Towing charges applied. Vehicle held until fine paid at nearest traffic station.",
+    },
+}
+
+class SendEmergencyRequest(BaseModel):
+    location: str
+    severity: str
+    reportId: str | None = None
+
+
+def _build_violation_judgment(violation_types: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    enriched: list[dict[str, Any]] = []
+    for item in violation_types or []:
+        label = str(item.get("label", "Unknown"))
+        fine_meta = VIOLATION_FINE_MAP.get(label, {
+            "fine": "As per local authority",
+            "law": "Traffic Regulation",
+            "ipc": "Applicable IPC provisions based on outcome",
+            "jail": "As determined by court",
+            "consequence": "Vehicle may be impounded and licence suspended pending investigation.",
+        })
+        enriched.append(
+            {
+                "label": label,
+                "count": int(item.get("count", 0)),
+                "fine": fine_meta.get("fine", "As per authority"),
+                "law": fine_meta.get("law", "Traffic Regulation"),
+                "ipc": fine_meta.get("ipc", "Applicable IPC provisions"),
+                "jail": fine_meta.get("jail", "As determined by court"),
+                "consequence": fine_meta.get("consequence", "Subject to court ruling."),
+            }
+        )
+    return enriched
+
+
+def _accident_severity(accidents: int, risk_score: int) -> str:
+    if accidents <= 0:
+        return "none"
+    if risk_score >= 80:
+        return "high"
+    if risk_score >= 45:
+        return "medium"
+    return "low"
+
+
+def _processed_media_url(processed_path: str) -> str:
+    return f"/processed/{Path(processed_path).name}"
+
+
+def _send_emergency_whatsapp(*, location: str, severity: str) -> dict[str, Any]:
+    sid = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
+    token = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
+    from_whatsapp = os.getenv("TWILIO_WHATSAPP_FROM", "whatsapp:+14155238886").strip()
+    to_whatsapp = os.getenv("EMERGENCY_WHATSAPP_TO", "whatsapp:+916374411016").strip()
+    if to_whatsapp.startswith("+"):
+        to_whatsapp = f"whatsapp:{to_whatsapp}"
+    if not sid or not token or TwilioClient is None:
+        return {"sent": False, "reason": "twilio_not_configured"}
+
+    body = (
+        "TraffixAI Emergency Alert\n"
+        f"Accident severity: {severity.upper()}\n"
+        f"Location: {location}\n"
+        "Immediate assistance requested."
+    )
+    try:
+        client = TwilioClient(sid, token)
+        msg = client.messages.create(
+            from_=from_whatsapp,
+            to=to_whatsapp,
+            body=body,
+        )
+        return {"sent": True, "sid": msg.sid, "to": to_whatsapp}
+    except TwilioException as exc:
+        return {"sent": False, "reason": str(exc)}
+
+
+async def _safe_run_llm_judge(
+    *,
+    media_type: str,
+    location: str,
+    detection: dict[str, Any],
+    timeout_seconds: float = 8.0,
+) -> dict[str, Any]:
+    try:
+        return await asyncio.wait_for(
+            llm_judge.judge_upload(
+                media_type=media_type,
+                location=location,
+                detection=detection,
+            ),
+            timeout=timeout_seconds,
+        )
+    except Exception:
+        return {
+            "enabled": llm_judge.enabled,
+            "status": "timeout_or_error",
+            "model": getattr(llm_judge, "cloudflare_llm_model", "unknown"),
+            "verdict": "needs_review",
+            "confidence": 0.0,
+            "summary": "LLM judge timed out. Using detection fallback.",
+            "recommended_action": "send_to_admin",
+        }
+
+
+async def _safe_send_emergency_whatsapp(
+    *,
+    location: str,
+    severity: str,
+    timeout_seconds: float = 6.0,
+) -> dict[str, Any]:
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(_send_emergency_whatsapp, location=location, severity=severity),
+            timeout=timeout_seconds,
+        )
+    except Exception:
+        return {"sent": False, "reason": "timeout_or_error"}
+
+
+def _send_email_alert(*, recipients: list[str], subject: str, body: str) -> None:
+    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user = os.getenv("SMTP_USER", "")
+    smtp_password = os.getenv("SMTP_PASSWORD", "")
+    from_email = os.getenv("ALERT_FROM_EMAIL", smtp_user or "noreply@traffixai.local")
+
+    if not smtp_user or not smtp_password:
+        raise HTTPException(
+            status_code=500,
+            detail="SMTP is not configured. Set SMTP_USER and SMTP_PASSWORD in backend environment.",
+        )
+
+    msg = EmailMessage()
+    msg["From"] = from_email
+    msg["To"] = ", ".join(recipients)
+    msg["Subject"] = subject
+    msg.set_content(body)
+
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_password)
+            server.send_message(msg)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to send distress email: {exc}") from exc
+
+
+def _queue_alert(
+    *,
+    payload: AlertRequest,
+    recipients: list[str],
+    status: str,
+    error: str | None = None,
+) -> None:
+    alerts_col.insert_one(
+        {
+            "incident_type": payload.incident_type,
+            "location": payload.location,
+            "severity": payload.severity,
+            "contacts": payload.contacts,
+            "message": payload.message,
+            "recipients": recipients,
+            "status": status,
+            "error": error,
+            "created_at": now_iso(),
+        }
+    )
+
+
 def _tokenize_location(raw: str) -> set[str]:
     stop_words = {
         "road", "rd", "street", "st", "avenue", "ave", "junction", "signal", "near",
@@ -193,6 +597,11 @@ def _tokenize_location(raw: str) -> set[str]:
         if len(t) >= 3 and t not in stop_words
     }
     return tokens
+
+
+def _normalize_location(raw: str | None) -> str:
+    value = (raw or "").strip()
+    return value if value else "Unknown"
 
 
 def _mode_label(mode: RouteMode) -> str:
@@ -235,7 +644,14 @@ def _get_token_from_auth(authorization: str | None) -> str:
     return authorization.split(" ", 1)[1].strip()
 
 
-def get_current_user(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+def get_current_user(
+    authorization: str | None = Header(default=None),
+    x_local_admin: str | None = Header(default=None, alias="X-Local-Admin"),
+) -> dict[str, Any]:
+    # Local admin mode used by frontend admin-login bypass.
+    if (x_local_admin or "").strip().lower() == "true":
+        return {"uid": "local-admin", "email": "admin@traffixai.local", "role": "Admin"}
+
     if not firebase_admin._apps:
         return {"uid": "local-dev", "email": "local@traffixai.dev", "role": "Admin"}
     token = _get_token_from_auth(authorization)
@@ -249,6 +665,15 @@ def get_current_user(authorization: str | None = Header(default=None)) -> dict[s
     return {"uid": decoded["uid"], "email": decoded.get("email"), "role": role}
 
 
+def get_optional_user(
+    authorization: str | None = Header(default=None),
+    x_local_admin: str | None = Header(default=None, alias="X-Local-Admin"),
+) -> dict[str, Any]:
+    if not authorization and not x_local_admin:
+        return {"uid": "anonymous", "email": "guest@traffixai.local", "role": "User"}
+    return get_current_user(authorization=authorization, x_local_admin=x_local_admin)
+
+
 def require_admin(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
     if user.get("role") != "Admin":
         raise HTTPException(status_code=403, detail="Admin route")
@@ -257,16 +682,16 @@ def require_admin(user: dict[str, Any] = Depends(get_current_user)) -> dict[str,
 
 def _box_to_detection_box(d: dict[str, Any]) -> dict[str, Any]:
     """Convert a TrafficMonitor detection dict to the API detection_box format."""
-    box = d["box"]
+    x1, y1, x2, y2 = _safe_box_coords(d.get("box"))
     label = d["class"]
     confidence = d.get("confidence", 0.0)
     color = "#2dd4a0" if label != "person" else "#10b981"
     category = "pedestrian" if label == "person" else "vehicle"
     return {
-        "x1": float(box[0]),
-        "y1": float(box[1]),
-        "x2": float(box[2]),
-        "y2": float(box[3]),
+        "x1": x1,
+        "y1": y1,
+        "x2": x2,
+        "y2": y2,
         "label": label,
         "confidence": confidence,
         "risk_score": 0.0,
@@ -277,13 +702,13 @@ def _box_to_detection_box(d: dict[str, Any]) -> dict[str, Any]:
 
 def _violation_box_to_detection_box(v: dict[str, Any]) -> dict[str, Any]:
     """Convert a TrafficMonitor violation dict to the API detection_box format."""
-    box = v.get("box", [0, 0, 10, 10])
+    x1, y1, x2, y2 = _safe_box_coords(v.get("box"))
     label = v.get("type", "violation").replace("_", " ").title()
     return {
-        "x1": float(box[0]),
-        "y1": float(box[1]),
-        "x2": float(box[2]),
-        "y2": float(box[3]),
+        "x1": x1,
+        "y1": y1,
+        "x2": x2,
+        "y2": y2,
         "label": label,
         "confidence": 1.0,
         "risk_score": 1.0,
@@ -294,12 +719,12 @@ def _violation_box_to_detection_box(v: dict[str, Any]) -> dict[str, Any]:
 
 def _accident_box_to_detection_box(a: dict[str, Any]) -> dict[str, Any]:
     """Convert a TrafficMonitor accident dict to the API detection_box format."""
-    box = a.get("location", [0, 0, 10, 10])
+    x1, y1, x2, y2 = _safe_box_coords(a.get("location"))
     return {
-        "x1": float(box[0]),
-        "y1": float(box[1]),
-        "x2": float(box[2]),
-        "y2": float(box[3]),
+        "x1": x1,
+        "y1": y1,
+        "x2": x2,
+        "y2": y2,
         "label": "Accident",
         "confidence": float(a.get("confidence", 1.0)),
         "risk_score": 1.0,
@@ -310,19 +735,20 @@ def _accident_box_to_detection_box(a: dict[str, Any]) -> dict[str, Any]:
 
 def _monitor_results_to_stats(results: dict[str, Any]) -> dict[str, Any]:
     """Normalise TrafficMonitor output to the stats dict used throughout this API."""
-    stats = results.get("stats", {})
-    violations_list: list[dict] = results.get("violations", [])
-    accidents_list: list[dict] = results.get("accidents", [])
-    detections: list[dict] = results.get("detections", [])
+    results = results or {}
+    stats = results.get("stats", {}) if isinstance(results.get("stats", {}), dict) else {}
+    violations_list: list[dict] = [v for v in (results.get("violations", []) or []) if isinstance(v, dict)]
+    accidents_list: list[dict] = [a for a in (results.get("accidents", []) or []) if isinstance(a, dict)]
+    detections: list[dict] = [d for d in (results.get("detections", []) or []) if isinstance(d, dict)]
 
-    violation_type_counter: Counter[str] = Counter(v["type"] for v in violations_list)
+    violation_type_counter: Counter[str] = Counter(str(v.get("type", "unknown")) for v in violations_list)
     violation_types = [
         {"label": vtype.replace("_", " ").title(), "count": cnt}
         for vtype, cnt in violation_type_counter.items()
     ]
 
     # Build objects list from detection classes
-    objects_counter: Counter[str] = Counter(d["class"] for d in detections)
+    objects_counter: Counter[str] = Counter(str(d.get("class", "unknown")) for d in detections)
     avg_conf = (
         sum(d.get("confidence", 0.0) for d in detections) / max(len(detections), 1)
         if detections
@@ -353,7 +779,7 @@ def _monitor_results_to_stats(results: dict[str, Any]) -> dict[str, Any]:
         {"type": "accident", **a} for a in accidents_list
     ]
 
-    violation_tags = [v["type"] for v in violations_list]
+    violation_tags = [str(v.get("type", "unknown")) for v in violations_list]
 
     return {
         "vehicles": vehicles,
@@ -376,17 +802,164 @@ def _monitor_results_to_stats(results: dict[str, Any]) -> dict[str, Any]:
 
 def analyze_frame(frame: np.ndarray, *, is_static_image: bool = False) -> tuple[np.ndarray, dict[str, Any]]:
     """Run TrafficMonitor on a single frame and return (annotated_frame, stats)."""
-    results = monitor.process_frame(frame, is_static_image=is_static_image)
-    annotated = monitor.draw_results(frame, results)
-    return annotated, _monitor_results_to_stats(results)
+    try:
+        results = monitor.process_frame(frame, is_static_image=is_static_image) or {}
+        stats = _monitor_results_to_stats(results)
+        try:
+            annotated = monitor.draw_results(frame.copy(), results)
+        except Exception:
+            annotated = frame.copy()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"AI analysis failed: {exc}") from exc
+    return annotated, stats
 
 
 def _frame_to_base64(frame: np.ndarray) -> str:
-    import base64
     ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
     if not ok:
         return ""
     return "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode()
+
+
+def _frame_to_base64_raw(frame: np.ndarray) -> str:
+    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    if not ok:
+        return ""
+    return base64.b64encode(buf.tobytes()).decode()
+
+
+def _legacy_stats_from_detection(detection: dict[str, Any]) -> dict[str, Any]:
+    by_class: dict[str, int] = {}
+    bike_count = 0
+    for obj in detection.get("objects", []):
+        cls = str(obj.get("class", "unknown"))
+        cnt = int(obj.get("count", 0))
+        if cnt <= 0:
+            continue
+        by_class[cls] = by_class.get(cls, 0) + cnt
+        if cls in {"bicycle", "motorcycle", "bike"}:
+            bike_count += cnt
+
+    return {
+        "total_vehicles": int(detection.get("vehicles", 0)),
+        "total_persons": int(detection.get("pedestrians", 0)),
+        "total_bikes": bike_count,
+        "traffic_lights": int(by_class.get("traffic light", 0)),
+        "violations": int(detection.get("violations", 0)),
+        "accidents": int(detection.get("accidents", 0)),
+        "risk_score": int(detection.get("risk_score", 0)),
+        "by_class": by_class,
+    }
+
+
+def _legacy_event_lists(detection: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    events = detection.get("events", []) or []
+    violations: list[dict[str, Any]] = []
+    accidents: list[dict[str, Any]] = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if str(event.get("type", "")).lower() == "accident":
+            accidents.append(event)
+        else:
+            violations.append(event)
+    return violations, accidents
+
+
+def _traffic_law_file() -> Path:
+    candidates = [
+        PROJECT_ROOT / "traffic" / "traffic_rag" / "indian-traffic-laws.json",
+        PROJECT_ROOT / "data" / "indian-traffic-laws.json",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError("Indian traffic law corpus not found")
+
+
+def _load_traffic_law_corpus() -> list[dict[str, Any]]:
+    global _law_corpus_cache
+    if _law_corpus_cache is not None:
+        return _law_corpus_cache
+    try:
+        with _traffic_law_file().open("r", encoding="utf-8") as fp:
+            rows = json.load(fp)
+    except Exception:
+        rows = []
+
+    corpus: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        searchable = " ".join(
+            [
+                str(row.get("id", "")),
+                str(row.get("section", "")),
+                str(row.get("title", "")),
+                str(row.get("text", "")),
+            ]
+        )
+        corpus.append(
+            {
+                **row,
+                "_search": searchable.lower(),
+            }
+        )
+    _law_corpus_cache = corpus
+    return corpus
+
+
+def _law_lookup() -> dict[str, dict[str, Any]]:
+    return {str(item.get("id", "")): item for item in _load_traffic_law_corpus() if item.get("id")}
+
+
+def _violation_key(label: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", label.strip().lower()).strip("_")
+
+
+def _cloudflare_llama_ready() -> bool:
+    return bool(
+        getattr(llm_judge, "cloudflare_account_id", "").strip()
+        and getattr(llm_judge, "cloudflare_api_token", "").strip()
+    )
+
+
+async def _call_cloudflare_llama_text(
+    *,
+    prompt: str,
+    system_prompt: str | None = None,
+    max_tokens: int = 600,
+    temperature: float = 0.2,
+) -> str:
+    account_id = getattr(llm_judge, "cloudflare_account_id", "").strip()
+    token = getattr(llm_judge, "cloudflare_api_token", "").strip()
+    model = getattr(llm_judge, "cloudflare_llm_model", "@cf/meta/llama-3.1-8b-instruct")
+    if not account_id or not token:
+        raise RuntimeError("cloudflare_credentials_missing")
+
+    url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
+    messages: list[dict[str, str]] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+    payload = {
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+
+    async with httpx.AsyncClient(timeout=90.0) as client:
+        resp = await client.post(url, json=payload, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+    text = str(data.get("result", {}).get("response", "")).strip()
+    if not text:
+        raise RuntimeError("empty_llama_response")
+    return text
 
 
 def process_image(path: Path) -> dict[str, Any]:
@@ -412,17 +985,30 @@ def process_video(path: Path) -> dict[str, Any]:
     monitor.reset_state()
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
-    frame_interval = max(1, int(fps // 2))  # ~2 frames per second
+    target_analysis_fps = float(os.getenv("ANALYSIS_TARGET_FPS", "20.0"))
+    frame_interval = max(1, int(round(fps / max(target_analysis_fps, 0.1))))
+    sample_fps = round((fps / frame_interval), 2) if frame_interval > 0 else 0.0
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    duration_seconds = (total_frames / fps) if fps and fps > 0 else 0.0
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 1280)
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 720)
     output_path = PROCESSED_DIR / f"processed_{path.stem}_{uuid.uuid4().hex[:8]}.mp4"
-    writer = cv2.VideoWriter(
-        str(output_path),
-        cv2.VideoWriter_fourcc(*"mp4v"),
-        fps if fps > 0 else 24.0,
-        (width, height),
-    )
+    codec_candidates = ("mp4v", "avc1", "XVID", "MJPG")
+    writer = None
+    for codec in codec_candidates:
+        candidate = cv2.VideoWriter(
+            str(output_path),
+            cv2.VideoWriter_fourcc(*codec),
+            fps if fps > 0 else 24.0,
+            (width, height),
+        )
+        if candidate.isOpened():
+            writer = candidate
+            break
+        candidate.release()
+    if writer is None:
+        cap.release()
+        raise HTTPException(status_code=500, detail="Could not initialize video writer")
 
     frame_idx = 0
     analyzed = 0
@@ -431,7 +1017,10 @@ def process_video(path: Path) -> dict[str, Any]:
     collected_violations: list[dict] = []
     collected_events: list[dict] = []
     collected_objects: Counter[str] = Counter()
+    preview_frames_enabled = os.getenv("VIDEO_PREVIEW_FRAMES_ENABLED", "0").strip().lower() in {"1", "true", "yes"}
     annotated_frames: list[str] = []
+    max_preview_frames = int(os.getenv("VIDEO_PREVIEW_MAX_FRAMES", "8"))
+    last_preview_second = -1
     last_annotated: np.ndarray | None = None
     last_boxes: list[dict[str, Any]] = []
 
@@ -441,7 +1030,13 @@ def process_video(path: Path) -> dict[str, Any]:
             break
 
         if frame_idx % frame_interval == 0:
-            annotated, stats = analyze_frame(frame.copy())
+            try:
+                annotated, stats = analyze_frame(frame.copy())
+            except HTTPException:
+                # Continue processing remaining frames when one frame fails.
+                frame_idx += 1
+                writer.write(frame)
+                continue
             analyzed += 1
             accum["vehicles"] += stats["vehicles"]
             accum["pedestrians"] += stats["pedestrians"]
@@ -459,8 +1054,14 @@ def process_video(path: Path) -> dict[str, Any]:
                 collected_objects[obj["class"]] += int(obj["count"])
             last_annotated = annotated
 
-            if len(annotated_frames) < 8:
-                annotated_frames.append(_frame_to_base64(annotated))
+            if preview_frames_enabled and max_preview_frames > 0:
+                current_second = int(frame_idx / max(fps, 1.0))
+                if (
+                    len(annotated_frames) < max_preview_frames
+                    and current_second != last_preview_second
+                ):
+                    annotated_frames.append(_frame_to_base64(annotated))
+                    last_preview_second = current_second
             writer.write(annotated)
         else:
             writer.write(frame)
@@ -499,11 +1100,14 @@ def process_video(path: Path) -> dict[str, Any]:
         "density_score": round(avg_density, 2),
         "frames_analyzed": analyzed,
         "total_frames": total_frames,
+        "duration_seconds": round(duration_seconds, 2),
+        "analysis_sample_fps": sample_fps,
         "processed_path": str(output_path),
-        "annotated_frames": annotated_frames,
         "events": collected_events,
         "vehicle_count": int(accum["vehicles"]),
     }
+    if preview_frames_enabled and annotated_frames:
+        agg["annotated_frames"] = annotated_frames
     if last_annotated is not None:
         agg["annotated_image"] = _frame_to_base64(last_annotated)
     return agg
@@ -521,14 +1125,17 @@ def _store_upload(
     description: str,
     detection: dict[str, Any],
     sent_to_admin: bool = False,
+    llm_judge: dict[str, Any] | None = None,
+    judge: dict[str, Any] | None = None,
 ) -> str:
+    normalized_location = _normalize_location(location)
     violation_type = ", ".join(sorted(set(v["label"] for v in detection.get("violation_types", []))))
     doc = {
         "user_id": user_uid,
         "media_type": media_type,
         "video_path": video_path,
         "processed_video": processed_video,
-        "location": location,
+        "location": normalized_location,
         "date": date,
         "time": time_str,
         "description": description,
@@ -559,18 +1166,61 @@ def _store_upload(
             "confidence": detection.get("confidence", 0.0),
             "frames_analyzed": detection.get("frames_analyzed", 1),
             "total_frames": detection.get("total_frames", 1),
+            "duration_seconds": detection.get("duration_seconds", 0.0),
+            "analysis_sample_fps": detection.get("analysis_sample_fps", 0.0),
             "events": detection.get("events", []),
         },
+        # Store judge and LLM verdict for admin retrieval
+        "judge": judge or {},
+        "llm_judge": llm_judge or {},
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
-    result = uploads_col.insert_one(doc)
+    doc = _sanitize_for_mongo(doc)
+    try:
+        result = uploads_col.insert_one(doc)
+    except InvalidDocument:
+        # Last-resort cleanup for nested non-serializable values from model output.
+        doc = _sanitize_for_mongo(json.loads(json.dumps(doc, default=str)))
+        result = uploads_col.insert_one(doc)
     _increment_stats(
         uploads=1,
         accidents=int(detection.get("accidents", 0)),
         violations=int(detection.get("violations", 0)),
     )
     return str(result.inserted_id)
+
+
+def _report_to_result_payload(row: dict[str, Any]) -> dict[str, Any]:
+    detection = row.get("detection", {}) or {}
+    processed = row.get("processed_video", "") or row.get("video_path", "")
+    processed_url = ""
+    if processed:
+        processed_url = processed if str(processed).startswith("/processed/") else _processed_media_url(str(processed))
+
+    return {
+        "id": str(row.get("_id")),
+        "media_type": row.get("media_type", "image"),
+        "vehicles": int(detection.get("vehicles", 0)),
+        "pedestrians": int(detection.get("pedestrians", 0)),
+        "violations": int(detection.get("violations", 0)),
+        "accidents": int(detection.get("accidents", 0)),
+        "risk_score": int(detection.get("risk_score", 0)),
+        "location": row.get("location", "Unknown"),
+        "violation_types": detection.get("violation_types", []),
+        "frames_analyzed": int(detection.get("frames_analyzed", 0) or 0),
+        "total_frames": int(detection.get("total_frames", 0) or 0),
+        "duration_seconds": float(detection.get("duration_seconds", 0) or 0),
+        "analysis_sample_fps": float(detection.get("analysis_sample_fps", 0) or 0),
+        "events": detection.get("events", []),
+        "detection_boxes": detection.get("detection_boxes", []),
+        "objects": detection.get("objects", []),
+        "confidence": float(detection.get("confidence", 0) or 0),
+        "processed_media_url": processed_url,
+        "llm_judge": row.get("llm_judge", {}) or {},
+        "judge": row.get("judge", {}) or {},
+        "analyzed_at": row.get("timestamp") or row.get("created_at") or now_iso(),
+    }
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────────
@@ -587,6 +1237,8 @@ def health() -> dict[str, Any]:
         "firebase_initialized": bool(firebase_admin._apps),
         "mongo": "connected",
         "monitor_loaded": monitor.model is not None,
+        "model_path": _model_path,
+        "authority_email": AUTHORITY_EMAIL,
     }
 
 
@@ -624,7 +1276,7 @@ async def upload_image(
     time_str: str = Form("", alias="time"),
     description: str = Form(""),
     user_id: str = Form(""),
-    user: dict[str, Any] = Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_optional_user),
 ) -> dict[str, Any]:
     if not (file.content_type or "").startswith("image/"):
         raise HTTPException(status_code=400, detail="File must be an image")
@@ -633,6 +1285,29 @@ async def upload_image(
     src_path = UPLOAD_DIR / f"{uuid.uuid4().hex}{ext}"
     src_path.write_bytes(content)
     analysis = process_image(src_path)
+    risk = _risk_score(analysis["violations"], analysis["accidents"], int(analysis["density_score"]))
+    analysis["risk_score"] = risk["score"]
+    analysis["risk_level"] = risk["level"]
+    analysis["llm_judge"] = await _safe_run_llm_judge(
+        media_type="image",
+        location=_normalize_location(location),
+        detection=analysis,
+    )
+    normalized_location = _normalize_location(location)
+    violation_judgment = _build_violation_judgment(analysis.get("violation_types", []))
+    severity = _accident_severity(int(analysis.get("accidents", 0)), int(analysis.get("risk_score", 0)))
+    send_to_admin = severity in {"low", "medium"} or severity == "none"
+    emergency_result = None
+    if severity == "high":
+        emergency_result = await _safe_send_emergency_whatsapp(location=normalized_location, severity=severity)
+        send_to_admin = True
+    analysis["judge"] = {
+        "accident_severity": severity,
+        "violation_judgment": violation_judgment,
+        "admin_forwarded": send_to_admin,
+        "emergency_whatsapp": emergency_result,
+    }
+    analysis["processed_media_url"] = _processed_media_url(analysis["processed_path"])
 
     resolved_uid = user_id or user["uid"]
     upload_id = _store_upload(
@@ -640,18 +1315,20 @@ async def upload_image(
         media_type="image",
         video_path=str(src_path),
         processed_video=analysis["processed_path"],
-        location=location,
+        location=normalized_location,
         date=date,
         time_str=time_str,
         description=description,
         detection=analysis,
+        sent_to_admin=send_to_admin,
+        llm_judge=analysis.get("llm_judge"),
+        judge=analysis.get("judge"),
     )
-    risk = _risk_score(analysis["violations"], analysis["accidents"], int(analysis["density_score"]))
     return {
         **analysis,
         "id": upload_id,
-        "risk_score": risk["score"],
-        "risk_level": risk["level"],
+        "location": normalized_location,
+        "media_type": "image",
         "analyzed_at": now_iso(),
         # Normalised response keys
         "violations": analysis["violations"],
@@ -668,7 +1345,7 @@ async def upload_video(
     time_str: str = Form("", alias="time"),
     description: str = Form(""),
     user_id: str = Form(""),
-    user: dict[str, Any] = Depends(get_current_user),
+    user: dict[str, Any] = Depends(get_optional_user),
 ) -> dict[str, Any]:
     if not (file.content_type or "").startswith("video/"):
         raise HTTPException(status_code=400, detail="File must be a video")
@@ -677,6 +1354,29 @@ async def upload_video(
     src_path = UPLOAD_DIR / f"{uuid.uuid4().hex}{ext}"
     src_path.write_bytes(content)
     analysis = process_video(src_path)
+    risk = _risk_score(analysis["violations"], analysis["accidents"], int(analysis["density_score"]))
+    analysis["risk_score"] = risk["score"]
+    analysis["risk_level"] = risk["level"]
+    analysis["llm_judge"] = await _safe_run_llm_judge(
+        media_type="video",
+        location=_normalize_location(location),
+        detection=analysis,
+    )
+    normalized_location = _normalize_location(location)
+    violation_judgment = _build_violation_judgment(analysis.get("violation_types", []))
+    severity = _accident_severity(int(analysis.get("accidents", 0)), int(analysis.get("risk_score", 0)))
+    send_to_admin = severity in {"low", "medium"} or severity == "none"
+    emergency_result = None
+    if severity == "high":
+        emergency_result = await _safe_send_emergency_whatsapp(location=normalized_location, severity=severity)
+        send_to_admin = True
+    analysis["judge"] = {
+        "accident_severity": severity,
+        "violation_judgment": violation_judgment,
+        "admin_forwarded": send_to_admin,
+        "emergency_whatsapp": emergency_result,
+    }
+    analysis["processed_media_url"] = _processed_media_url(analysis["processed_path"])
 
     resolved_uid = user_id or user["uid"]
     upload_id = _store_upload(
@@ -684,24 +1384,26 @@ async def upload_video(
         media_type="video",
         video_path=str(src_path),
         processed_video=analysis["processed_path"],
-        location=location,
+        location=normalized_location,
         date=date,
         time_str=time_str,
         description=description,
         detection=analysis,
+        sent_to_admin=send_to_admin,
+        llm_judge=analysis.get("llm_judge"),
+        judge=analysis.get("judge"),
     )
-    risk = _risk_score(analysis["violations"], analysis["accidents"], int(analysis["density_score"]))
-    return {
+    return _sanitize_for_mongo({
         **analysis,
         "id": upload_id,
-        "risk_score": risk["score"],
-        "risk_level": risk["level"],
+        "location": normalized_location,
+        "media_type": "video",
         "analyzed_at": now_iso(),
         # Normalised response keys
         "violations": analysis["violations"],
         "vehicles": analysis["vehicles"],
         "events": analysis.get("events", []),
-    }
+    })
 
 
 @app.get("/reports")
@@ -716,9 +1418,39 @@ def get_reports(
     if status:
         filt["status"] = status
 
-    rows = list(uploads_col.find(filt).sort("created_at", -1).limit(limit))
+    projection = {
+        "user_id": 1,
+        "media_type": 1,
+        "location": 1,
+        "status": 1,
+        "video_path": 1,
+        "processed_video": 1,
+        "sentToAdmin": 1,
+        "incidentType": 1,
+        "created_at": 1,
+        "updated_at": 1,
+        "detection.vehicles": 1,
+        "detection.pedestrians": 1,
+        "detection.accidents": 1,
+        "detection.violations": 1,
+        "detection.risk_score": 1,
+        "detection.confidence": 1,
+        "detection.violation_types": 1,
+        "judge": 1,
+        "llm_judge": 1,
+    }
+    rows = list(uploads_col.find(filt, projection).sort("created_at", -1).limit(limit))
     reports = [serialize_id(row) for row in rows]
     return {"reports": reports, "total": len(reports)}
+
+
+@app.get("/analysis-result/{report_id}")
+def get_analysis_result(report_id: str) -> dict[str, Any]:
+    oid = parse_object_id(report_id)
+    row = uploads_col.find_one({"_id": oid})
+    if not row:
+        raise HTTPException(status_code=404, detail="Report not found")
+    return _report_to_result_payload(row)
 
 
 @app.patch("/reports/{report_id}")
@@ -781,7 +1513,29 @@ def get_admin_requests(
     filt: dict[str, Any] = {"sentToAdmin": True}
     if status:
         filt["status"] = status
-    rows = list(uploads_col.find(filt).sort("created_at", -1).limit(limit))
+    projection = {
+        "user_id": 1,
+        "media_type": 1,
+        "location": 1,
+        "description": 1,
+        "status": 1,
+        "video_path": 1,
+        "processed_video": 1,
+        "sentToAdmin": 1,
+        "incidentType": 1,
+        "created_at": 1,
+        "updated_at": 1,
+        "detection.vehicles": 1,
+        "detection.pedestrians": 1,
+        "detection.accidents": 1,
+        "detection.violations": 1,
+        "detection.risk_score": 1,
+        "detection.confidence": 1,
+        "detection.violation_types": 1,
+        "judge": 1,
+        "llm_judge": 1,
+    }
+    rows = list(uploads_col.find(filt, projection).sort("created_at", -1).limit(limit))
     requests = [serialize_id(row) for row in rows]
     return {"requests": requests, "total": len(requests)}
 
@@ -837,23 +1591,87 @@ def predict_risk(payload: RiskRequest) -> dict[str, Any]:
 
 @app.post("/send-alert")
 def send_alert(payload: AlertRequest, _: dict[str, Any] = Depends(require_admin)) -> dict[str, Any]:
+    recipients = [AUTHORITY_EMAIL]
+    for email in payload.contacts:
+        e = (email or "").strip()
+        if e and e.lower() not in {r.lower() for r in recipients}:
+            recipients.append(e)
+
+    subject = f"[TraffixAI Distress] {payload.incident_type} | {payload.severity.upper()}"
+    body = (
+        "TraffixAI Distress Signal\n\n"
+        f"Incident Type: {payload.incident_type}\n"
+        f"Severity: {payload.severity}\n"
+        f"Location: {payload.location}\n"
+        f"Time (UTC): {now_iso()}\n\n"
+        f"Message:\n{payload.message or 'Immediate attention required.'}\n"
+    )
+    fail_open = os.getenv("ALERT_FAIL_OPEN", "true").strip().lower() == "true"
+    alert_status = "sent"
+    email_error = None
+    try:
+        _send_email_alert(recipients=recipients, subject=subject, body=body)
+    except HTTPException as exc:
+        email_error = str(exc.detail)
+        if not fail_open:
+            raise
+        alert_status = "queued"
+
+    _queue_alert(
+        payload=payload,
+        recipients=recipients,
+        status=alert_status,
+        error=email_error,
+    )
+
     return {
-        "status": "sent",
+        "status": alert_status,
         "message": payload.message or f"{payload.incident_type} alert sent for {payload.location}",
         "alert": {
             "type": payload.incident_type,
             "location": payload.location,
             "severity": payload.severity,
-            "contacts_notified": len(payload.contacts),
+            "contacts_notified": len(recipients),
+            "recipients": recipients,
+            "delivery_error": email_error,
             "timestamp": now_iso(),
         },
+    }
+
+
+@app.post("/admin/send-emergency")
+async def admin_send_emergency(
+    payload: SendEmergencyRequest,
+    _: dict[str, Any] = Depends(require_admin),
+) -> dict[str, Any]:
+    """Admin-triggered manual WhatsApp emergency alert to emergency services."""
+    location = _normalize_location(payload.location)
+    severity = (payload.severity or "high").strip()
+    result = await _safe_send_emergency_whatsapp(location=location, severity=severity)
+
+    # Log alert in mongo
+    alerts_col.insert_one({
+        "incident_type": "Admin Emergency Alert",
+        "location": location,
+        "severity": severity,
+        "report_id": payload.reportId,
+        "whatsapp": result,
+        "status": "sent" if result.get("sent") else "failed",
+        "created_at": now_iso(),
+        "triggered_by": "admin",
+    })
+
+    return {
+        "ok": result.get("sent", False),
+        "whatsapp": result,
+        "location": location,
+        "severity": severity,
     }
 
 
 @app.post("/route-safety-recommendation")
 def route_safety_recommendation(
     payload: RouteSafetyRequest,
-    _: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, Any]:
     origin = payload.origin.strip()
     destination = payload.destination.strip()
@@ -861,17 +1679,23 @@ def route_safety_recommendation(
         raise HTTPException(status_code=400, detail="Origin and destination are required")
 
     route_tokens = _tokenize_location(f"{origin} {destination}")
-    accident_rows = list(
-        uploads_col.find(
-            {
-                "status": "approved",
-                "sentToAdmin": True,
-                "accident_detected": True,
-                "location": {"$exists": True, "$ne": ""},
-            },
-            {"location": 1, "created_at": 1, "detection.accidents": 1},
-        ).sort("created_at", -1).limit(500)
-    )
+    try:
+        accident_rows = list(
+            uploads_col.find(
+                {
+                    "status": "approved",
+                    "sentToAdmin": True,
+                    "accident_detected": True,
+                    "location": {"$exists": True, "$nin": ["", "Unknown", "unknown", "N/A", "n/a"]},
+                },
+                {"location": 1, "created_at": 1, "detection.accidents": 1},
+            )
+            .sort("created_at", -1)
+            .limit(500)
+            .max_time_ms(5000)
+        )
+    except Exception:
+        accident_rows = []
 
     matched: list[dict[str, Any]] = []
     for row in accident_rows:
@@ -995,6 +1819,392 @@ def analytics_admin_overview(_: dict[str, Any] = Depends(require_admin)) -> dict
             "total_violations": int(totals.get("total_violations", 0)),
         },
     }
+
+
+# ── Legacy traffic/backend compatibility routes (single-backend mode) ─────────
+VIOLATION_LAW_ID_MAP: dict[str, list[str]] = {
+    "no_helmet": ["IND-11", "IND-12"],
+    "excess_riders": ["IND-21", "IND-46"],
+    "lane_change": ["IND-34", "IND-09"],
+    "wrong_way": ["IND-32", "IND-09"],
+    "speeding": ["IND-14", "IND-15"],
+    "stopped_vehicle": ["IND-44", "IND-26"],
+    "jaywalking": ["IND-33", "IND-24"],
+    "tailgating": ["IND-09", "IND-42"],
+    "red_light": ["IND-22", "IND-23"],
+    "uturn": ["IND-09", "IND-24"],
+    "accident": ["IND-41", "IND-49", "IND-29", "IND-30", "IND-31"],
+}
+
+
+@app.get("/api/health")
+def legacy_health() -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "service": "TraffixAI Unified Backend",
+        "timestamp": now_iso(),
+        "llama_ready": _cloudflare_llama_ready(),
+        "gemini_ready": bool(os.getenv("GEMINI_API_KEY", "").strip()),
+    }
+
+
+@app.post("/api/upload")
+async def legacy_upload(file: UploadFile = File(...)) -> dict[str, Any]:
+    video_id = str(uuid.uuid4())
+    suffix = Path(file.filename or "video.mp4").suffix or ".mp4"
+    upload_path = UPLOAD_DIR / f"legacy_{video_id}{suffix}"
+    with upload_path.open("wb") as out:
+        out.write(await file.read())
+    legacy_video_store[video_id] = str(upload_path)
+    return {"video_id": video_id, "filename": file.filename}
+
+
+@app.post("/api/analyze-image")
+async def legacy_analyze_image(file: UploadFile = File(...)) -> dict[str, Any]:
+    raw = await file.read()
+    np_arr = np.frombuffer(raw, np.uint8)
+    frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    if frame is None:
+        raise HTTPException(status_code=400, detail="Could not decode image")
+
+    monitor.reset_state()
+    annotated, detection = analyze_frame(frame, is_static_image=True)
+    detection["risk_score"] = _risk_score(
+        int(detection.get("violations", 0)),
+        int(detection.get("accidents", 0)),
+        int(detection.get("density_score", 0)),
+    )["score"]
+    legacy_stats = _legacy_stats_from_detection(detection)
+    violations, accidents = _legacy_event_lists(detection)
+    return {
+        "image": _frame_to_base64_raw(annotated),
+        "stats": legacy_stats,
+        "violations": violations,
+        "accidents": accidents,
+    }
+
+
+@app.post("/api/traffic-law-query")
+async def legacy_traffic_law_query(req: LegacyTrafficLawQueryRequest) -> dict[str, Any]:
+    question = (req.question or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Question is required")
+    corpus = _load_traffic_law_corpus()
+    if not corpus:
+        return {"answer": "Traffic law corpus is not available on the server.", "sources": []}
+
+    query_tokens = set(_tokenize_location(question))
+    ctx_text = " ".join(str(v) for v in (req.incident_context or {}).values())
+    query_tokens.update(_tokenize_location(ctx_text))
+
+    ranked: list[tuple[int, dict[str, Any]]] = []
+    for row in corpus:
+        search_text = str(row.get("_search", ""))
+        score = sum(1 for token in query_tokens if token in search_text)
+        if score > 0:
+            ranked.append((score, row))
+    ranked.sort(key=lambda x: x[0], reverse=True)
+    top = [r[1] for r in ranked[:5]] if ranked else corpus[:3]
+
+    context = "\n\n---\n\n".join(
+        f"ID: {row.get('id')}\nSection: {row.get('section','')}\nTitle: {row.get('title','')}\nText: {row.get('text','')}"
+        for row in top[:6]
+    )
+    answer: str
+    model_used = "fallback"
+    if _cloudflare_llama_ready():
+        try:
+            answer = await _call_cloudflare_llama_text(
+                prompt=(
+                    "Answer the following Indian traffic-law question using only the provided context.\n"
+                    "If context is insufficient, clearly state that.\n"
+                    f"Question: {question}\n\nContext:\n{context}\n\nAnswer:"
+                ),
+                system_prompt=(
+                    "You are a legal traffic assistant for India. "
+                    "Cite relevant sections when possible and avoid invented laws."
+                ),
+                max_tokens=450,
+            )
+            model_used = getattr(llm_judge, "cloudflare_llm_model", "llama")
+        except Exception:
+            answer = ""
+    else:
+        answer = ""
+
+    if not answer:
+        summary_lines = []
+        for row in top[:3]:
+            section = row.get("section") or "N/A"
+            title = row.get("title") or "Traffic Rule"
+            summary_lines.append(f"{section}: {title}")
+        answer = (
+            "Relevant Indian traffic law references found:\n- "
+            + "\n- ".join(summary_lines)
+            + "\nPlease verify final enforcement action with local authority."
+        )
+
+    return {
+        "answer": answer,
+        "model_used": model_used,
+        "sources": [
+            {
+                "id": row.get("id"),
+                "section": row.get("section"),
+                "title": row.get("title"),
+                "text": row.get("text"),
+            }
+            for row in top
+        ],
+    }
+
+
+@app.post("/api/traffic-law-from-analysis")
+async def legacy_traffic_law_from_analysis(req: LegacyTrafficLawAnalysisRequest) -> dict[str, Any]:
+    lookup = _law_lookup()
+    detected_types: list[str] = []
+    for violation in req.violations or []:
+        if isinstance(violation, dict):
+            raw_type = str(violation.get("type") or violation.get("label") or "")
+        else:
+            raw_type = str(violation)
+        key = _violation_key(raw_type)
+        if key and key not in detected_types:
+            detected_types.append(key)
+    if req.accidents:
+        detected_types.append("accident")
+    detected_types = list(dict.fromkeys(detected_types))
+
+    structured_laws: list[dict[str, Any]] = []
+    for d_type in detected_types:
+        laws: list[dict[str, Any]] = []
+        for law_id in VIOLATION_LAW_ID_MAP.get(d_type, []):
+            entry = lookup.get(law_id)
+            if not entry:
+                continue
+            laws.append(
+                {
+                    "id": entry.get("id"),
+                    "section": entry.get("section"),
+                    "title": entry.get("title"),
+                    "text": entry.get("text"),
+                }
+            )
+        if laws:
+            structured_laws.append({"violation_type": d_type, "laws": laws[:2]})
+
+    summary = ""
+    model_used = "fallback"
+    if structured_laws and _cloudflare_llama_ready():
+        law_context = "\n\n".join(
+            f"Violation: {group['violation_type']}\n"
+            + "\n".join(
+                f"- {law.get('section','')}: {law.get('title','')} | {law.get('text','')}"
+                for law in group.get("laws", [])
+            )
+            for group in structured_laws
+        )
+        try:
+            summary = await _call_cloudflare_llama_text(
+                prompt=(
+                    "Provide a concise legal consequence summary for detected traffic violations in India.\n"
+                    "Focus on penalties, imprisonment, and practical enforcement.\n"
+                    f"Detected types: {', '.join(detected_types) or 'none'}\n\n"
+                    f"Context:\n{law_context}\n\nSummary:"
+                ),
+                system_prompt=(
+                    "You are an Indian traffic-law analyst. Use only the given context and be precise."
+                ),
+                max_tokens=500,
+            )
+            model_used = getattr(llm_judge, "cloudflare_llm_model", "llama")
+        except Exception:
+            summary = ""
+    if not summary:
+        summary = (
+            "Applicable law references generated from detected violations."
+            if structured_laws
+            else "No specific violation-to-law mapping found for this analysis."
+        )
+    sources = [law for group in structured_laws for law in group["laws"]][:6]
+    return {
+        "summary": summary,
+        "model_used": model_used,
+        "detected_types": detected_types,
+        "structured_laws": structured_laws,
+        "sources": sources,
+    }
+
+
+@app.post("/api/generate-dashboard")
+async def legacy_generate_dashboard(req: LegacyDashboardRequest) -> dict[str, Any]:
+    cumulative = req.cumulative or {}
+    total_v = int(req.totalViolations or 0)
+    accidents = int((req.stats or {}).get("accidents", 0))
+    risk = _risk_score(total_v, accidents, int(cumulative.get("total_vehicles", 0)))
+    top_concerns = sorted((req.violationCounts or {}).items(), key=lambda x: x[1], reverse=True)[:3]
+    analysis = {
+        "summary": (
+            f"Detected {cumulative.get('total_vehicles', 0)} vehicles, "
+            f"{cumulative.get('total_persons', 0)} pedestrians, and {total_v} violations."
+        ),
+        "risk_level": risk["level"],
+        "risk_score": risk["score"],
+        "top_concerns": [f"{k}: {v}" for k, v in top_concerns] or ["No major concerns"],
+        "recommendations": [
+            "Increase enforcement in high-risk corridors.",
+            "Deploy warning signage and speed moderation.",
+            "Escalate repeated offenders to authority review.",
+        ],
+        "insight": "Unified backend generated this dashboard without external renderer.",
+    }
+    if _cloudflare_llama_ready():
+        try:
+            llm_text = await _call_cloudflare_llama_text(
+                prompt=(
+                    "Return a valid JSON object only with keys: summary, risk_level, risk_score, top_concerns, recommendations, insight.\n"
+                    f"Vehicles: {cumulative.get('total_vehicles', 0)}\n"
+                    f"Pedestrians: {cumulative.get('total_persons', 0)}\n"
+                    f"Bikes: {cumulative.get('total_bikes', 0)}\n"
+                    f"Violations: {total_v}\n"
+                    f"Violation breakdown: {dict(req.violationCounts or {})}\n"
+                ),
+                system_prompt="You are a traffic operations analyst. JSON only.",
+                max_tokens=520,
+            )
+            parsed = json.loads(llm_text.strip("` \n"))
+            if isinstance(parsed, dict):
+                analysis.update(parsed)
+                analysis["model_used"] = getattr(llm_judge, "cloudflare_llm_model", "llama")
+        except Exception:
+            pass
+
+    return {
+        "analysis": analysis,
+        "image": None,
+        "violation_data": dict(req.violationCounts or {}),
+        "vehicle_data": dict(cumulative.get("by_class", {})),
+        "totals": {
+            "vehicles": int(cumulative.get("total_vehicles", 0)),
+            "persons": int(cumulative.get("total_persons", 0)),
+            "bikes": int(cumulative.get("total_bikes", 0)),
+            "violations": total_v,
+        },
+    }
+
+
+@app.post("/api/executive-summary")
+async def legacy_executive_summary(req: LegacyExecutiveSummaryRequest) -> dict[str, Any]:
+    cumulative = req.cumulative or {}
+    total_v = int(req.totalViolations or 0)
+    accident_count = len(req.accidents or [])
+    severity = "critical" if accident_count > 0 or total_v >= 25 else "high" if total_v >= 12 else "medium" if total_v >= 4 else "low"
+    result = {
+        "headline": f"{total_v} traffic violations detected in analyzed footage.",
+        "summary": (
+            f"Traffic snapshot includes {cumulative.get('total_vehicles', 0)} vehicles, "
+            f"{cumulative.get('total_persons', 0)} pedestrians, "
+            f"{cumulative.get('total_bikes', 0)} bikes, "
+            f"with {total_v} violations and {accident_count} accidents."
+        ),
+        "highlights": [
+            "Unified backend is active.",
+            "Violation and accident intelligence included.",
+            "Admin review routing is available.",
+        ],
+        "severity": severity,
+    }
+    if _cloudflare_llama_ready():
+        try:
+            llm_text = await _call_cloudflare_llama_text(
+                prompt=(
+                    "Return valid JSON only with keys: headline, summary, highlights, severity.\n"
+                    f"Vehicles={cumulative.get('total_vehicles', 0)}, Pedestrians={cumulative.get('total_persons', 0)}, "
+                    f"Bikes={cumulative.get('total_bikes', 0)}, Violations={total_v}, Accidents={accident_count}\n"
+                    f"Violation breakdown: {dict(req.violationCounts or {})}\n"
+                ),
+                system_prompt="You write concise executive summaries for traffic monitoring.",
+                max_tokens=360,
+            )
+            parsed = json.loads(llm_text.strip("` \n"))
+            if isinstance(parsed, dict):
+                result.update(parsed)
+                result["model_used"] = getattr(llm_judge, "cloudflare_llm_model", "llama")
+        except Exception:
+            pass
+    return result
+
+
+@app.websocket("/ws/monitor/{video_id}")
+async def legacy_ws_monitor(websocket: WebSocket, video_id: str) -> None:
+    await websocket.accept()
+    path = legacy_video_store.get(video_id)
+    if not path or not Path(path).exists():
+        await websocket.send_json({"error": "Video not found"})
+        await websocket.close()
+        return
+
+    cap = cv2.VideoCapture(path)
+    if not cap.isOpened():
+        await websocket.send_json({"error": "Could not open video"})
+        await websocket.close()
+        return
+
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    frame_num = 0
+    skip_interval = max(1, int(os.getenv("WS_MONITOR_SKIP_INTERVAL", "2")))
+    try:
+        monitor.reset_state()
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                await websocket.send_json(
+                    {
+                        "progress": {"frame": total_frames or frame_num, "total": total_frames, "percent": 100.0},
+                        "done": True,
+                    }
+                )
+                break
+
+            frame_num += 1
+            if frame_num % skip_interval != 0:
+                if total_frames > 0:
+                    await websocket.send_json(
+                        {
+                            "progress": {
+                                "frame": frame_num,
+                                "total": total_frames,
+                                "percent": round((frame_num / total_frames) * 100, 1),
+                            }
+                        }
+                    )
+                continue
+
+            annotated, detection = analyze_frame(frame.copy())
+            detection["risk_score"] = _risk_score(
+                int(detection.get("violations", 0)),
+                int(detection.get("accidents", 0)),
+                int(detection.get("density_score", 0)),
+            )["score"]
+            legacy_stats = _legacy_stats_from_detection(detection)
+            violations, accidents = _legacy_event_lists(detection)
+            await websocket.send_json(
+                {
+                    "frame": _frame_to_base64_raw(annotated),
+                    "stats": legacy_stats,
+                    "violations": violations,
+                    "accidents": accidents,
+                    "progress": {
+                        "frame": frame_num,
+                        "total": total_frames,
+                        "percent": round((frame_num / total_frames) * 100, 1) if total_frames > 0 else 0.0,
+                    },
+                }
+            )
+    except WebSocketDisconnect:
+        pass
+    finally:
+        cap.release()
 
 
 if __name__ == "__main__":

@@ -15,16 +15,22 @@ import tempfile
 from PIL import Image
 import time
 import math
+import os
 
 
 class TrafficMonitor:
     def __init__(self, model_path='yolov8n.pt', conf_threshold=0.4):
         """Initialize the traffic monitoring system"""
         self.model = YOLO(model_path)
+        self.root_dir = os.path.dirname(os.path.abspath(__file__))
+        self.crash_model_path = os.path.join(self.root_dir, 'YOLO-Weights', 'accident_model.pt')
+        self.crash_model = YOLO(self.crash_model_path) if os.path.exists(self.crash_model_path) else None
         self.track_history = defaultdict(lambda: deque(maxlen=60))
         self.velocity_history = defaultdict(lambda: deque(maxlen=20))
         self.accident_cooldown = {}
         self.violation_cooldown = {}         # (type, track_id) -> last_alert_time
+        self.event_candidate_counts = {}
+        self.event_candidate_timestamps = {}
         self.stopped_vehicle_timers = {}     # track_id -> first_stopped_time
         self.dominant_direction = None       # auto-detected traffic flow direction
         self.direction_votes = deque(maxlen=200)
@@ -49,7 +55,13 @@ class TrafficMonitor:
         # ---- Optimized Thresholds (locked) ----
         # Existing modules
         self.accident_iou_threshold = 0.50       # stricter overlap needed = fewer false accident alerts
+        self.accident_overlap_over_smaller_threshold = 0.60
         self.accident_decel_threshold = 0.5      # require noticeable deceleration
+        self.accident_min_track_history = 5
+        self.accident_motion_threshold = 2.0
+        self.crash_conf_threshold = 0.70
+        self.crash_vehicle_iou_threshold = 0.10
+        self.crash_min_vehicle_matches = 2
         self.rider_iou_threshold = 0.20          # higher overlap ensures person is truly ON the bike
         self.helmet_dark_ratio_lo = 0.20
         self.helmet_dark_ratio_hi = 0.70
@@ -67,6 +79,26 @@ class TrafficMonitor:
         self.jaywalking_zone_bot_pct = 0.20      # bottom 20% = safe zone
         self.uturn_angle_threshold = 150         # 150° = only flag sharp near-180° turns
         self.wrong_way_min_history = 20          # need more frames to judge direction confidently
+        self.event_confirmation_window_seconds = 1.5
+        self.event_confirmation_frames = {
+            'lane_change': 2,
+            'wrong_way': 2,
+            'speeding': 2,
+            'stopped_vehicle': 2,
+            'uturn': 2,
+            'no_helmet': 2,
+            'excess_riders': 2,
+            'jaywalking': 2,
+            'tailgating': 2,
+            'red_light': 2,
+        }
+        self.min_person_detection_confidence = 0.45
+        self.min_vehicle_detection_confidence = 0.45
+        self.min_bike_detection_confidence = 0.45
+        self.min_traffic_light_confidence = 0.50
+        self.min_vehicle_event_area_ratio = 0.0015
+        self.min_bike_event_area_ratio = 0.0009
+        self.min_person_event_area_ratio = 0.0010
 
         # Module enable flags
         self.enable_helmet = True
@@ -144,29 +176,68 @@ class TrafficMonitor:
                 iou = self.calculate_iou(det1['box'], det2['box'])
                 if iou < self.accident_iou_threshold:
                     continue
+                overlap_ratio = self.calculate_overlap_over_smaller(det1['box'], det2['box'])
+                if overlap_ratio < self.accident_overlap_over_smaller_threshold:
+                    continue
                 tid1, tid2 = det1.get('track_id', -1), det2.get('track_id', -1)
+                if tid1 == -1 or tid2 == -1:
+                    continue
+                v1 = list(self.velocity_history.get(tid1, []))
+                v2 = list(self.velocity_history.get(tid2, []))
+                if len(v1) < self.accident_min_track_history or len(v2) < self.accident_min_track_history:
+                    continue
+                moving = max(np.mean(v1[-3:]), np.mean(v2[-3:])) >= self.accident_motion_threshold
+                if not moving:
+                    continue
                 decel = False
-                for tid in (tid1, tid2):
-                    if tid == -1:
-                        continue
-                    vels = self.velocity_history.get(tid, deque())
-                    if len(vels) >= 3:
-                        recent = np.mean(list(vels)[-3:])
-                        earlier = np.mean(list(vels)[:3])
-                        if earlier > 1 and recent / earlier < self.accident_decel_threshold:
-                            decel = True
-                if tid1 != -1 and tid2 != -1 and not decel:
+                for vels in (v1, v2):
+                    recent = np.mean(vels[-3:])
+                    earlier = np.mean(vels[:3])
+                    if earlier > 1 and recent / earlier < self.accident_decel_threshold:
+                        decel = True
+                if not decel:
                     continue
                 pair = tuple(sorted([int(tid1), int(tid2)]))
                 if pair in self.accident_cooldown and now - self.accident_cooldown[pair] < self.accident_cooldown_seconds:
                     continue
                 self.accident_cooldown[pair] = now
+                impact_box = self.calculate_intersection_box(det1['box'], det2['box'])
                 accidents.append({
                     'vehicles': [det1['class'], det2['class']],
-                    'location': det1['box'], 'confidence': round(float(iou), 2),
+                    'location': impact_box,
+                    'vehicle_boxes': [det1['box'], det2['box']],
+                    'confidence': round(float(iou), 2),
                     'deceleration': decel,
+                    'source': 'motion',
                 })
         return accidents
+
+    def detect_crash_scene(self, frame, vehicle_detections):
+        if self.crash_model is None:
+            return []
+        results = self.crash_model.predict(frame, verbose=False, conf=self.crash_conf_threshold)
+        crashes = []
+        if not results or results[0].boxes is None:
+            return crashes
+        for box, conf in zip(results[0].boxes.xyxy.cpu().numpy(), results[0].boxes.conf.cpu().numpy()):
+            matched_vehicles = []
+            matched_vehicle_boxes = []
+            for det in vehicle_detections:
+                if self.calculate_iou(box, det['box']) >= self.crash_vehicle_iou_threshold:
+                    matched_vehicles.append(det['class'])
+                    matched_vehicle_boxes.append(det['box'])
+            if len(matched_vehicles) < self.crash_min_vehicle_matches:
+                continue
+            focus_box = self.calculate_focus_box(box, matched_vehicle_boxes)
+            crashes.append({
+                'vehicles': matched_vehicles[:3],
+                'location': focus_box,
+                'vehicle_boxes': matched_vehicle_boxes[:3],
+                'confidence': round(float(conf), 2),
+                'deceleration': None,
+                'source': 'crash_model',
+            })
+        return crashes
 
     # ================================================================== #
     #  4. LANE CHANGE DETECTION (resolution-normalized)
@@ -396,6 +467,46 @@ class TrafficMonitor:
         union = area1 + area2 - intersection
         return intersection / union if union > 0 else 0
 
+    def calculate_intersection_box(self, box1, box2):
+        x1 = max(box1[0], box2[0])
+        y1 = max(box1[1], box2[1])
+        x2 = min(box1[2], box2[2])
+        y2 = min(box1[3], box2[3])
+        if x2 <= x1 or y2 <= y1:
+            return self.calculate_enclosing_box([box1, box2])
+        return [x1, y1, x2, y2]
+
+    def calculate_enclosing_box(self, boxes):
+        valid_boxes = [b for b in boxes if b is not None]
+        x1 = min(b[0] for b in valid_boxes)
+        y1 = min(b[1] for b in valid_boxes)
+        x2 = max(b[2] for b in valid_boxes)
+        y2 = max(b[3] for b in valid_boxes)
+        return [x1, y1, x2, y2]
+
+    def calculate_focus_box(self, crash_box, vehicle_boxes):
+        if not vehicle_boxes:
+            return crash_box
+        vehicle_union = self.calculate_enclosing_box(vehicle_boxes)
+        x1 = max(crash_box[0], vehicle_union[0])
+        y1 = max(crash_box[1], vehicle_union[1])
+        x2 = min(crash_box[2], vehicle_union[2])
+        y2 = min(crash_box[3], vehicle_union[3])
+        if x2 <= x1 or y2 <= y1:
+            return vehicle_union
+        return [x1, y1, x2, y2]
+
+    def calculate_overlap_over_smaller(self, box1, box2):
+        x1 = max(box1[0], box2[0])
+        y1 = max(box1[1], box2[1])
+        x2 = min(box1[2], box2[2])
+        y2 = min(box1[3], box2[3])
+        intersection = max(0, x2 - x1) * max(0, y2 - y1)
+        area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
+        area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
+        smaller = min(area1, area2)
+        return intersection / smaller if smaller > 0 else 0
+
     def classify_vehicle(self, class_id):
         return self.all_classes.get(class_id, 'unknown')
 
@@ -415,13 +526,48 @@ class TrafficMonitor:
         self.violation_cooldown[key] = now
         return True
 
+    def _confirm_event(self, vtype, entity_id, now):
+        key = (vtype, entity_id)
+        last_seen = self.event_candidate_timestamps.get(key, 0)
+        if now - last_seen > self.event_confirmation_window_seconds:
+            self.event_candidate_counts[key] = 0
+        self.event_candidate_timestamps[key] = now
+        self.event_candidate_counts[key] = self.event_candidate_counts.get(key, 0) + 1
+        required = self.event_confirmation_frames.get(vtype, 1)
+        return self.event_candidate_counts[key] >= required
+
+    def _passes_detection_confidence(self, class_id, confidence):
+        if class_id == self.person_class_id:
+            return confidence >= self.min_person_detection_confidence
+        if class_id == self.traffic_light_class_id:
+            return confidence >= self.min_traffic_light_confidence
+        if class_id == self.motorcycle_class_id or class_id == self.bicycle_class_id:
+            return confidence >= self.min_bike_detection_confidence
+        if class_id in self.vehicle_classes:
+            return confidence >= self.min_vehicle_detection_confidence
+        return confidence >= self.conf_threshold
+
+    def _box_area(self, box):
+        return max(0.0, float(box[2] - box[0])) * max(0.0, float(box[3] - box[1]))
+
+    def _is_event_sized_box(self, box, class_id, frame_area):
+        area_ratio = self._box_area(box) / frame_area if frame_area > 0 else 0.0
+        if class_id == self.person_class_id:
+            return area_ratio >= self.min_person_event_area_ratio
+        if class_id == self.motorcycle_class_id or class_id == self.bicycle_class_id:
+            return area_ratio >= self.min_bike_event_area_ratio
+        if class_id in self.vehicle_classes:
+            return area_ratio >= self.min_vehicle_event_area_ratio
+        return True
+
     # ================================================================== #
     #  MAIN PROCESSING PIPELINE
     # ================================================================== #
-    def process_frame(self, frame):
+    def process_frame(self, frame, persist_tracks=True, run_crash_model=True):
         now = time.time()
         fh, fw = frame.shape[:2]
-        results = self.model.track(frame, persist=True, verbose=False,
+        frame_area = float(fh * fw)
+        results = self.model.track(frame, persist=persist_tracks, verbose=False,
                                    conf=self.conf_threshold)
 
         detections = []
@@ -441,6 +587,8 @@ class TrafficMonitor:
 
             for box, cls, conf, track_id in zip(boxes, classes, confs, track_ids):
                 cls = int(cls)
+                if not self._passes_detection_confidence(cls, float(conf)):
+                    continue
                 label = self.classify_vehicle(cls)
                 detection = {
                     'box': box, 'class': label, 'class_id': cls,
@@ -456,6 +604,8 @@ class TrafficMonitor:
                     traffic_light_boxes.append(box)
 
                 if cls in self.vehicle_classes:
+                    if not self._is_event_sized_box(box, cls, frame_area):
+                        continue
                     vehicle_detections.append(detection)
                     center = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
 
@@ -465,7 +615,7 @@ class TrafficMonitor:
                         # 4. Lane change
                         if self.enable_lane_change:
                             if self.detect_lane_change(track_id, center, fw):
-                                if self._should_report('lane_change', track_id, now):
+                                if self._confirm_event('lane_change', track_id, now) and self._should_report('lane_change', track_id, now):
                                     violations.append({
                                         'type': 'lane_change', 'vehicle': label,
                                         'track_id': int(track_id), 'box': box,
@@ -474,7 +624,7 @@ class TrafficMonitor:
                         # 5. Wrong-way driving
                         if self.enable_wrong_way:
                             if self.detect_wrong_way(track_id, fh):
-                                if self._should_report('wrong_way', track_id, now):
+                                if self._confirm_event('wrong_way', track_id, now) and self._should_report('wrong_way', track_id, now):
                                     violations.append({
                                         'type': 'wrong_way', 'vehicle': label,
                                         'track_id': int(track_id), 'box': box,
@@ -484,7 +634,7 @@ class TrafficMonitor:
                         if self.enable_speeding:
                             is_speeding, spd = self.detect_speeding(track_id)
                             if is_speeding:
-                                if self._should_report('speeding', track_id, now):
+                                if self._confirm_event('speeding', track_id, now) and self._should_report('speeding', track_id, now):
                                     violations.append({
                                         'type': 'speeding', 'vehicle': label,
                                         'speed': spd, 'track_id': int(track_id),
@@ -495,7 +645,7 @@ class TrafficMonitor:
                         if self.enable_stopped:
                             is_stopped, dur = self.detect_stopped_vehicle(track_id, now)
                             if is_stopped:
-                                if self._should_report('stopped_vehicle', track_id, now):
+                                if self._confirm_event('stopped_vehicle', track_id, now) and self._should_report('stopped_vehicle', track_id, now):
                                     violations.append({
                                         'type': 'stopped_vehicle', 'vehicle': label,
                                         'duration': dur, 'track_id': int(track_id),
@@ -505,7 +655,7 @@ class TrafficMonitor:
                         # 11. Illegal U-turn
                         if self.enable_uturn:
                             if self.detect_uturn(track_id):
-                                if self._should_report('uturn', track_id, now):
+                                if self._confirm_event('uturn', track_id, now) and self._should_report('uturn', track_id, now):
                                     violations.append({
                                         'type': 'uturn', 'vehicle': label,
                                         'track_id': int(track_id), 'box': box,
@@ -519,7 +669,7 @@ class TrafficMonitor:
                 count, rider_boxes = self.count_bike_riders(bike['box'], person_boxes)
                 bike['rider_count'] = count
                 if count > 2:
-                    if self._should_report('excess_riders', bike_tid, now):
+                    if self._confirm_event('excess_riders', bike_tid, now) and self._should_report('excess_riders', bike_tid, now):
                         violations.append({
                             'type': 'excess_riders', 'count': count, 'box': bike['box'],
                         })
@@ -536,7 +686,7 @@ class TrafficMonitor:
                     wearing, hconf = self.detect_helmet(frame, rbox)
                     if not wearing:
                         # Use bike track_id as proxy for rider identity
-                        if self._should_report('no_helmet', bike_tid, now):
+                        if self._confirm_event('no_helmet', bike_tid, now) and self._should_report('no_helmet', bike_tid, now):
                             violations.append({
                                 'type': 'no_helmet', 'box': rbox,
                                 'helmet_confidence': hconf,
@@ -545,7 +695,9 @@ class TrafficMonitor:
         # ---- 3: Accident ----
         accidents = []
         if self.enable_accident:
-            accidents = self.detect_accident(vehicle_detections, now)
+            accidents.extend(self.detect_accident(vehicle_detections, now))
+            if run_crash_model:
+                accidents.extend(self.detect_crash_scene(frame, vehicle_detections))
 
         # ---- 8: Jaywalking ----
         if self.enable_jaywalking:
@@ -555,7 +707,7 @@ class TrafficMonitor:
                 if self.detect_jaywalking(pbox, fh, fw, veh_boxes, all_bike_boxes):
                     # Use position-based key since pedestrians have no track_id
                     pseudo_id = int((pbox[0] + pbox[2]) / 2) * 10000 + int((pbox[1] + pbox[3]) / 2)
-                    if self._should_report('jaywalking', pseudo_id, now):
+                    if self._confirm_event('jaywalking', pseudo_id, now) and self._should_report('jaywalking', pseudo_id, now):
                         violations.append({
                             'type': 'jaywalking', 'box': pbox,
                         })
@@ -565,14 +717,17 @@ class TrafficMonitor:
             tailgates = self.detect_tailgating(vehicle_detections, fh)
             for tg in tailgates:
                 pseudo_id = int((tg['box'][0] + tg['box'][2]) / 2)
-                if self._should_report('tailgating', pseudo_id, now):
+                if self._confirm_event('tailgating', pseudo_id, now) and self._should_report('tailgating', pseudo_id, now):
                     violations.append(tg)
 
         # ---- 10: Red light ----
         if self.enable_red_light and traffic_light_boxes:
             rl_violations = self.detect_red_light_violation(
                 traffic_light_boxes, vehicle_detections, fh)
-            violations.extend(rl_violations)
+            for rv in rl_violations:
+                rid = rv.get('track_id', -1)
+                if self._confirm_event('red_light', rid, now) and self._should_report('red_light', rid, now):
+                    violations.append(rv)
 
         return {
             'detections': detections,
@@ -748,7 +903,7 @@ def main():
 
             with st.spinner("⏳ Analysing…"):
                 t0 = time.time()
-                res = monitor.process_frame(image)
+                res = monitor.process_frame(image, persist_tracks=False)
                 elapsed = time.time() - t0
                 output = monitor.draw_results(image.copy(), res)
 
@@ -819,6 +974,7 @@ def main():
             tot_v, tot_a, idx = 0, 0, 0
             violation_log = defaultdict(int)  # type -> unique count
             seen_vehicle_ids = set()          # unique vehicle track IDs
+            crash_check_interval = 3
 
             while cap.isOpened() and not stop:
                 ret, frame = cap.read()
@@ -827,7 +983,8 @@ def main():
                 idx += 1
                 if idx % 2 != 0:
                     continue
-                res = monitor.process_frame(frame)
+                run_crash_model = (idx % crash_check_interval == 0)
+                res = monitor.process_frame(frame, run_crash_model=run_crash_model)
                 out = monitor.draw_results(frame.copy(), res)
                 stframe.image(cv2.cvtColor(out, cv2.COLOR_BGR2RGB),
                               channels="RGB", width="stretch")
@@ -896,12 +1053,14 @@ def main():
             stframe = st.empty()
             stats_area = st.empty()
             fc, t0 = 0, time.time()
+            crash_check_interval = 3
             while st.session_state.get('webcam_running', False):
                 ret, frame = cap.read()
                 if not ret:
                     st.error("❌ Webcam error"); break
                 fc += 1
-                res = monitor.process_frame(frame)
+                run_crash_model = (fc % crash_check_interval == 0)
+                res = monitor.process_frame(frame, run_crash_model=run_crash_model)
                 out = monitor.draw_results(frame.copy(), res)
                 stframe.image(cv2.cvtColor(out, cv2.COLOR_BGR2RGB),
                               channels="RGB", width="stretch")

@@ -4,21 +4,22 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { Activity, ArrowRight, Shield } from 'lucide-react';
+import { ArrowRight, Shield } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import toast from 'react-hot-toast';
+import BrandLogo from '@/components/layout/BrandLogo';
 
 export default function LoginPage() {
     const [loading, setLoading] = useState(false);
-    const { user, loading: authLoading, loginWithGoogle } = useAuth();
+    const { user, loading: authLoading, loginWithGoogle, isAdmin } = useAuth();
     const router = useRouter();
 
     // Redirect if already logged in
     useEffect(() => {
         if (!authLoading && user) {
-            router.replace('/');
+            router.replace(isAdmin() ? '/admin' : '/dashboard');
         }
-    }, [user, authLoading, router]);
+    }, [user, authLoading, isAdmin, router]);
 
     // Show nothing while checking auth state
     if (authLoading || user) {
@@ -34,13 +35,14 @@ export default function LoginPage() {
         try {
             await loginWithGoogle();
             toast.success('Welcome to TraffixAI!');
-        } catch (err: any) {
+        } catch (err: unknown) {
+            const e = err as { code?: string; message?: string };
             const msg =
-                err.code === 'auth/popup-closed-by-user'
+                e.code === 'auth/popup-closed-by-user'
                     ? 'Sign-in popup closed'
-                    : err.code === 'auth/popup-blocked'
+                    : e.code === 'auth/popup-blocked'
                         ? 'Popup blocked – please allow popups for this site'
-                        : err.message || 'Google sign-in failed';
+                        : e.message || 'Google sign-in failed';
             toast.error(msg);
         } finally {
             setLoading(false);
@@ -48,8 +50,17 @@ export default function LoginPage() {
     };
 
     return (
-        <div className="min-h-screen bg-dark-900 grid-pattern flex items-center justify-center px-4">
+        <div className="min-h-screen bg-dark-900 flex items-center justify-center px-4 overflow-hidden relative">
+            <video
+                className="absolute inset-0 w-full h-full object-cover opacity-35"
+                src="/videos/login.mp4"
+                autoPlay
+                muted
+                loop
+                playsInline
+            />
             <div className="absolute inset-0 bg-gradient-radial from-cyan-500/5 via-transparent to-transparent" />
+            <div className="absolute inset-0 bg-dark-900/65" />
 
             <motion.div
                 initial={{ opacity: 0, y: 30 }}
@@ -59,14 +70,9 @@ export default function LoginPage() {
             >
                 {/* Logo */}
                 <div className="text-center mb-10">
-                    <Link href="/" className="inline-flex items-center gap-2 mb-6">
-                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center shadow-glow-cyan">
-                            <Activity className="w-5 h-5 text-white" />
-                        </div>
-                        <span className="text-2xl font-display font-bold gradient-text">TraffixAI</span>
-                    </Link>
-                    <h1 className="text-3xl font-display font-bold text-white mb-2">Welcome Back</h1>
-                    <p className="text-slate-400">Sign in with your Google account to continue</p>
+                    <BrandLogo href="/" size="md" className="mb-6" />
+                    <h1 className="text-3xl font-display font-bold text-white mb-2">Welcome</h1>
+                    <p className="text-slate-400">Sign in to continue</p>
                 </div>
 
                 {/* Google Sign-In Card */}
@@ -110,7 +116,7 @@ export default function LoginPage() {
                        transition-all duration-200 font-medium text-sm group"
                     >
                         <Shield className="w-4 h-4 text-cyan-400 group-hover:text-cyan-300 transition-colors" />
-                        Admin Login (Email & Password)
+                        Admin Login (Username & Password)
                         <ArrowRight className="w-3.5 h-3.5 ml-auto opacity-60 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all" />
                     </Link>
 

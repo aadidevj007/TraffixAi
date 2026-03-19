@@ -5,11 +5,12 @@ import Dashboard from './components/Dashboard';
 import ViolationLog from './components/ViolationLog';
 import ImageAnalysis from './components/ImageAnalysis';
 import AIDashboard from './components/AIDashboard';
+import TrafficLawAssistant from './components/TrafficLawAssistant';
+import ExecutiveSummary from './components/ExecutiveSummary';
 import './App.css';
 
 function App() {
   const [mode, setMode] = useState(null); // null | 'video' | 'image'
-  const [videoId, setVideoId] = useState(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [stats, setStats] = useState({ total_vehicles: 0, total_persons: 0, total_bikes: 0, traffic_lights: 0 });
   const [cumulative, setCumulative] = useState({ total_vehicles: 0, total_persons: 0, total_bikes: 0, by_class: {} });
@@ -23,7 +24,6 @@ function App() {
 
   const startStreaming = useCallback((id) => {
     setMode('video');
-    setVideoId(id);
     setIsStreaming(true);
     setIsDone(false);
     setViolations([]);
@@ -46,11 +46,20 @@ function App() {
       } else {
         try {
           const data = JSON.parse(event.data);
-          if (data.done) { setIsDone(true); setIsStreaming(false); return; }
+          if (data.progress) setProgress(data.progress);
+          if (data.done) {
+            setProgress((prev) => ({
+              frame: prev.total || prev.frame,
+              total: prev.total,
+              percent: 100,
+            }));
+            setIsDone(true);
+            setIsStreaming(false);
+            return;
+          }
           if (data.error) { console.error('Server:', data.error); return; }
           if (data.stats) setStats(data.stats);
           if (data.cumulative) setCumulative(data.cumulative);
-          if (data.progress) setProgress(data.progress);
           if (data.violations?.length > 0) {
             const ts = new Date().toLocaleTimeString();
             const newV = data.violations.map((v, i) => ({ ...v, id: Date.now() + i, timestamp: ts }));
@@ -77,7 +86,6 @@ function App() {
   const resetApp = useCallback(() => {
     if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
     setMode(null);
-    setVideoId(null);
     setIsStreaming(false);
     setFrameUrl(null);
     setIsDone(false);
@@ -138,6 +146,7 @@ function App() {
             <div className="feature-pill">🚶 Jaywalking</div>
             <div className="feature-pill">💥 Accident Detection</div>
           </div>
+          <TrafficLawAssistant />
         </div>
       </div>
     );
@@ -223,6 +232,21 @@ function App() {
               totalViolations={totalViolations}
             />
           )}
+          {(isDone || totalViolations > 0) && (
+            <ExecutiveSummary
+              stats={stats}
+              cumulative={cumulative}
+              violationCounts={violationCounts}
+              totalViolations={totalViolations}
+              accidents={accidents}
+            />
+          )}
+          <TrafficLawAssistant
+            stats={stats}
+            violations={violations}
+            accidents={accidents}
+            autoAnalyze={isDone}
+          />
         </div>
         <aside className="sidebar">
           <Dashboard stats={stats} cumulative={cumulative} violationCounts={violationCounts} totalViolations={totalViolations} />

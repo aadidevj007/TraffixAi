@@ -45,3 +45,6 @@ Thumbs.db
 *.tsbuildinfo
 frontend/.vercel/
 frontend/.git_backup/
+*.pt
+*.onnx
+*.h5

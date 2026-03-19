@@ -1,14 +1,15 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { motion } from 'framer-motion';
 import {
   Camera, Zap, Shield, Brain, ArrowRight,
-  ChevronDown, Activity, AlertTriangle, Eye, TrendingUp
+  ChevronDown, Activity, AlertTriangle, Eye
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import BrandLogo from '@/components/layout/BrandLogo';
 
 const ThreeBackground = dynamic(() => import('@/components/three/ThreeBackground'), {
   ssr: false,
@@ -20,6 +21,7 @@ const features = [
     icon: Camera,
     title: 'Real-Time Surveillance',
     description: 'Monitor traffic 24/7 with intelligent CCTV integration and live video stream analysis powered by YOLOv8.',
+    shortExplanation: 'Live camera frames are analyzed with YOLO, objects are tracked, and risky events are flagged in near real time.',
     color: 'from-cyan-500 to-blue-600',
     glow: 'shadow-glow-cyan',
   },
@@ -27,6 +29,7 @@ const features = [
     icon: Eye,
     title: 'Upload Evidence',
     description: 'Upload CCTV footage or images for immediate AI analysis, accident detection, and violation reporting.',
+    shortExplanation: 'Uploaded image/video is processed on the backend, annotated, scored, and saved as a report for user and admin review.',
     color: 'from-blue-500 to-indigo-600',
     glow: 'shadow-glow-purple',
   },
@@ -34,6 +37,7 @@ const features = [
     icon: Brain,
     title: 'Risk Prediction',
     description: 'Advanced ML models compute real-time risk scores based on vehicle density, violations, and accident patterns.',
+    shortExplanation: 'The platform combines violations, accidents, and traffic density into a risk score to prioritize high-risk incidents.',
     color: 'from-purple-500 to-pink-600',
     glow: 'shadow-glow-purple',
   },
@@ -41,20 +45,27 @@ const features = [
     icon: Shield,
     title: 'Admin Dashboard',
     description: 'Comprehensive control panel for authorities to manage reports, configure alerts, and oversee operations.',
+    shortExplanation: 'Admins can review requests, approve or reject reports, track trends, and trigger alerts from one control panel.',
     color: 'from-emerald-500 to-teal-600',
     glow: 'shadow-glow-cyan',
   },
 ];
 
 const stats = [
-  { label: 'Accuracy Rate', value: '95.7%', icon: Zap },
-  { label: 'Detection Speed', value: '<0.1s', icon: Activity },
+  { label: 'Accuracy Rate', value: '91.8%', icon: Zap },
+  { label: 'Detection Speed', value: '<7s', icon: Activity },
   { label: 'Alerts Sent', value: '50K+', icon: AlertTriangle },
   { label: 'Roads Monitored', value: '1,200+', icon: Eye },
 ];
 
 export default function HomePage() {
   const { user } = useAuth();
+  const [flippedCards, setFlippedCards] = useState<boolean[]>(features.map(() => false));
+
+  const toggleCard = (index: number) => {
+    setFlippedCards((prev) => prev.map((item, i) => (i === index ? !item : item)));
+  };
+
   return (
     <div className="min-h-screen bg-dark-900 overflow-x-hidden">
       {/* Hero Section */}
@@ -69,7 +80,22 @@ export default function HomePage() {
         <div className="absolute inset-0 bg-gradient-to-b from-dark-900/40 via-transparent to-dark-900" />
 
         {/* Hero Content */}
-        <div className="relative z-10 text-center px-4 max-w-5xl mx-auto">
+        <div className="relative z-10 text-center px-4 max-w-5xl mx-auto pt-40 md:pt-60">
+          {/* Main Title */}
+          <motion.h1
+            initial={{ opacity: 0, y: 30 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.7, delay: 0.1 }}
+            className="text-6xl md:text-8xl font-brand font-bold tracking-[0.06em] mb-6 leading-none"
+          >
+            <span className="bg-gradient-to-r from-white via-cyan-200 to-cyan-400 bg-clip-text text-transparent">
+              TRAFFIX     
+            </span>
+            <span className="bg-gradient-to-r from-cyan-400 via-blue-400 to-purple-400 bg-clip-text text-transparent">
+                 AI
+            </span>
+          </motion.h1>
+
           {/* Badge */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -78,23 +104,8 @@ export default function HomePage() {
             className="inline-flex items-center gap-2 glass-card px-4 py-2 mb-8 border border-cyan-500/30"
           >
             <div className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
-            <span className="text-sm text-cyan-400 font-medium">AI-Powered Traffic Intelligence Platform</span>
+            <span className="text-sm text-cyan-400 font-medium">AI Powered Traffic Intelligence Platform</span>
           </motion.div>
-
-          {/* Main Title */}
-          <motion.h1
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.7, delay: 0.1 }}
-            className="text-6xl md:text-8xl font-display font-bold mb-6 leading-none"
-          >
-            <span className="bg-gradient-to-r from-white via-cyan-200 to-cyan-400 bg-clip-text text-transparent">
-              TRAFFIX
-            </span>
-            <span className="bg-gradient-to-r from-cyan-400 via-blue-400 to-purple-400 bg-clip-text text-transparent">
-              AI
-            </span>
-          </motion.h1>
 
           {/* Subtitle */}
           <motion.p
@@ -159,6 +170,22 @@ export default function HomePage() {
         </motion.div>
       </section>
 
+      <section className="relative py-10 md:py-14">
+        <div className="container-max">
+          <div className="relative rounded-3xl overflow-hidden border border-cyan-500/20">
+            <video
+              className="w-full h-[240px] md:h-[360px] object-cover"
+              src="/videos/bg.mp4"
+              autoPlay
+              muted
+              loop
+              playsInline
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-dark-900/70 via-dark-900/20 to-transparent" />
+          </div>
+        </div>
+      </section>
+
       {/* Features Section */}
       <section id="features" className="py-24 relative">
         <div className="container-max">
@@ -185,16 +212,29 @@ export default function HomePage() {
                 whileInView={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5, delay: i * 0.1 }}
                 viewport={{ once: true }}
-                className="glass-card-hover p-8 group"
+                className="feature-flip-card"
               >
-                <div className={`w-14 h-14 rounded-2xl bg-gradient-to-br ${feature.color} flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300`}>
-                  <feature.icon className="w-7 h-7 text-white" />
-                </div>
-                <h3 className="text-xl font-display font-semibold text-white mb-3">{feature.title}</h3>
-                <p className="text-slate-400 leading-relaxed">{feature.description}</p>
-                <div className="mt-6 flex items-center gap-2 text-cyan-400 text-sm font-medium opacity-0 group-hover:opacity-100 transition-opacity">
-                  Learn more <ArrowRight className="w-4 h-4" />
-                </div>
+                <button
+                  type="button"
+                  onClick={() => toggleCard(i)}
+                  className={`feature-flip-inner ${flippedCards[i] ? 'is-flipped' : ''}`}
+                  aria-label={`Flip ${feature.title} card`}
+                >
+                  <div className="feature-face glass-card-hover p-8 group text-left">
+                    <div className={`w-14 h-14 rounded-2xl bg-gradient-to-br ${feature.color} flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300`}>
+                      <feature.icon className="w-7 h-7 text-white" />
+                    </div>
+                    <h3 className="text-xl font-display font-semibold text-white mb-3">{feature.title}</h3>
+                    <p className="text-slate-400 leading-relaxed">{feature.description}</p>
+                    <p className="mt-5 text-cyan-300 text-sm">Click to flip</p>
+                  </div>
+
+                  <div className="feature-face feature-face-back glass-card p-8 text-left border border-cyan-500/35">
+                    <h3 className="text-xl font-display font-semibold text-white mb-3">{feature.title}</h3>
+                    <p className="text-slate-300 leading-relaxed">{feature.shortExplanation}</p>
+                    <p className="mt-5 text-cyan-300 text-sm">Click to flip back</p>
+                  </div>
+                </button>
               </motion.div>
             ))}
           </div>
@@ -245,16 +285,13 @@ export default function HomePage() {
       {/* Footer */}
       <footer className="py-8 border-t border-white/10">
         <div className="container-max flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <Activity className="w-5 h-5 text-cyan-400" />
-            <span className="font-display font-bold gradient-text">TraffixAI</span>
-          </div>
+          <BrandLogo href="/" size="sm" />
           <p className="text-slate-500 text-sm">
             © 2026 TraffixAI: AI-Based Smart Traffic Surveillance System.
           </p>
           <div className="flex gap-6 text-slate-500 text-sm">
-            <Link href="/privacy" className="hover:text-cyan-400 transition-colors">About</Link>
-            <Link href="/terms" className="hover:text-cyan-400 transition-colors">Contact Us</Link>
+            <Link href="/about" className="hover:text-cyan-400 transition-colors">About The Website</Link>
+            <Link href="/contact" className="hover:text-cyan-400 transition-colors">Contact Us</Link>
           </div>
         </div>
       </footer>

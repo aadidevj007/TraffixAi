@@ -12,7 +12,7 @@ import {
     updateProfile,
 } from 'firebase/auth';
 import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
-import { auth, db } from '@/lib/firebase';
+import { auth, db, firebaseEnabled } from '@/lib/firebase';
 import { syncUserToBackend } from '@/lib/api';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
@@ -77,6 +77,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     // ── Fetch or create Firestore profile ───────────────────────────────
     const fetchOrCreateProfile = async (firebaseUser: User, role: UserProfile['role'] = 'User') => {
+        if (!db) {
+            const fallback: UserProfile = {
+                uid: firebaseUser.uid,
+                name: firebaseUser.displayName || 'User',
+                email: firebaseUser.email || '',
+                phone: '',
+                role,
+                photoURL: firebaseUser.photoURL || '',
+                createdAt: null,
+            };
+            setProfile(fallback);
+            return fallback;
+        }
         const docRef = doc(db, 'users', firebaseUser.uid);
         const snap = await getDoc(docRef);
         if (snap.exists()) {
@@ -103,7 +116,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (inactivityTimer.current) clearTimeout(inactivityTimer.current);
 
         // Only set timer if user is logged in (Firebase or local admin)
-        if (!auth.currentUser && !isLocalAdmin()) return;
+        if (!auth?.currentUser && !isLocalAdmin()) return;
 
         inactivityTimer.current = setTimeout(async () => {
             try {
@@ -115,7 +128,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     router.push('/login');
                     return;
                 }
-                await signOut(auth);
+                if (auth) await signOut(auth);
                 setProfile(null);
                 toast('Session expired due to inactivity', { icon: '⏰' });
                 router.push('/login');
@@ -151,6 +164,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setLoading(false);
             return;
         }
+        if (!firebaseEnabled || !auth) {
+            setLoading(false);
+            return;
+        }
 
         const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
             setUser(firebaseUser);
@@ -181,6 +198,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         password: string,
         role: UserProfile['role'] = 'User',
     ) => {
+        if (!auth || !db) {
+            throw new Error('Firebase is not configured. Set NEXT_PUBLIC_FIREBASE_* in frontend/.env.local');
+        }
         const safeRole: UserProfile['role'] = role === 'Admin' || role === 'Authority' ? 'User' : role;
         const result = await createUserWithEmailAndPassword(auth, email, password);
         await updateProfile(result.user, { displayName: name });
@@ -201,14 +221,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     /** Regular users sign in with Google → redirect to dashboard */
     const loginWithGoogle = async () => {
+        if (!auth) {
+            throw new Error('Firebase is not configured. Set NEXT_PUBLIC_FIREBASE_* in frontend/.env.local');
+        }
         const result = await signInWithPopup(auth, googleProvider);
         await fetchOrCreateProfile(result.user, 'User');
         resetInactivityTimer();
-        router.push('/');
+        router.push('/dashboard');
     };
 
     /** Admin-only: email + password login → redirect to admin */
     const adminLogin = async (email: string, password: string) => {
+        if (!auth) {
+            throw new Error('Firebase is not configured. Set NEXT_PUBLIC_FIREBASE_* in frontend/.env.local');
+        }
         await signInWithEmailAndPassword(auth, email, password);
         resetInactivityTimer();
         router.push('/admin');
@@ -223,12 +249,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             router.push('/login');
             return;
         }
-        await signOut(auth);
+        if (auth) await signOut(auth);
         setProfile(null);
         router.push('/login');
     };
 
     const updateUserRole = async (uid: string, role: UserProfile['role']) => {
+        if (!db) {
+            throw new Error('Firebase is not configured. Set NEXT_PUBLIC_FIREBASE_* in frontend/.env.local');
+        }
         await setDoc(doc(db, 'users', uid), { role }, { merge: true });
         if (uid === user?.uid) setProfile((p) => p ? { ...p, role } : p);
     };

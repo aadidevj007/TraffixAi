@@ -2,14 +2,15 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/contexts/AuthContext';
 import {
-    Home, LayoutDashboard, Upload, FileText, Shield,
-    LogIn, LogOut, Menu, X, ChevronDown, User, Activity, Sparkles
+    Home, LayoutDashboard, Upload, FileText, CheckCircle2, Clock3, ListChecks,
+    LogIn, LogOut, Menu, X, ChevronDown, User, Sparkles
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import BrandLogo from '@/components/layout/BrandLogo';
 
 const guestNavLinks = [
     { href: '/', label: 'Home', icon: Home },
@@ -22,25 +23,56 @@ const userNavLinks = [
     { href: '/reports', label: 'Reports', icon: FileText },
 ];
 
-const adminLink = { href: '/admin', label: 'Admin', icon: Shield };
+const adminNavLinks = [
+    { href: '/admin?tab=dashboard', label: 'Admin Dashboard', icon: LayoutDashboard },
+    { href: '/admin?tab=pending', label: 'Pending Requests', icon: Clock3 },
+    { href: '/admin?tab=accepted', label: 'Accepted Requests', icon: CheckCircle2 },
+    { href: '/admin?tab=all', label: 'All Requests', icon: ListChecks },
+];
 
 
 export default function Navbar() {
     const [isOpen, setIsOpen] = useState(false);
     const [scrolled, setScrolled] = useState(false);
     const [userMenuOpen, setUserMenuOpen] = useState(false);
+    const [localAdminSession, setLocalAdminSession] = useState(false);
     const pathname = usePathname();
+    const searchParams = useSearchParams();
     const router = useRouter();
     const { user, profile, logout, isAdmin } = useAuth();
-    const visibleLinks = user
-        ? (isAdmin() ? [...userNavLinks, adminLink] : userNavLinks)
-        : guestNavLinks;
+    const adminSession = localAdminSession || (!!user && isAdmin());
+    const authenticated = !!user || localAdminSession;
+    const visibleLinks = adminSession
+        ? adminNavLinks
+        : (authenticated ? userNavLinks : guestNavLinks);
+    const currentAdminTab = searchParams.get('tab') || 'dashboard';
+
+    const isActiveLink = (href: string) => {
+        if (href.startsWith('/admin?tab=')) {
+            const tab = href.split('tab=')[1] || 'dashboard';
+            return pathname === '/admin' && currentAdminTab === tab;
+        }
+        return pathname === href;
+    };
 
     useEffect(() => {
         const handleScroll = () => setScrolled(window.scrollY > 20);
         window.addEventListener('scroll', handleScroll);
         return () => window.removeEventListener('scroll', handleScroll);
     }, []);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const syncLocalAdmin = () => setLocalAdminSession(sessionStorage.getItem('localAdmin') === 'true');
+        syncLocalAdmin();
+        window.addEventListener('storage', syncLocalAdmin);
+        return () => window.removeEventListener('storage', syncLocalAdmin);
+    }, []);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        setLocalAdminSession(sessionStorage.getItem('localAdmin') === 'true');
+    }, [pathname]);
 
     const handleLogout = async () => {
         try {
@@ -65,14 +97,7 @@ export default function Navbar() {
             <div className="container-max">
                 <div className="flex items-center justify-between h-16">
                     {/* Logo */}
-                    <Link href="/" className="flex items-center gap-2 group">
-                        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center shadow-glow-cyan">
-                            <Activity className="w-4 h-4 text-white" />
-                        </div>
-                        <span className="text-xl font-display font-bold gradient-text group-hover:opacity-90 transition-opacity">
-                            TraffixAI
-                        </span>
-                    </Link>
+                    <BrandLogo href={adminSession ? '/admin' : '/'} size="sm" />
 
                     {/* Desktop Links */}
                     <div className="hidden md:flex items-center gap-1">
@@ -80,11 +105,9 @@ export default function Navbar() {
                             <Link
                                 key={href}
                                 href={href}
-                                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${href === '/admin'
-                                    ? 'text-amber-400 hover:text-amber-300 hover:bg-amber-500/10'
-                                    : pathname === href
-                                        ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
-                                        : 'text-slate-300 hover:text-white hover:bg-white/10'
+                                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${isActiveLink(href)
+                                    ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
+                                    : 'text-slate-300 hover:text-white hover:bg-white/10'
                                     }`}
                             >
                                 <Icon className="w-4 h-4" />
@@ -95,18 +118,18 @@ export default function Navbar() {
 
                     {/* Right side */}
                     <div className="hidden md:flex items-center gap-3">
-                        {user ? (
+                        {authenticated ? (
                             <div className="relative">
                                 <button
                                     onClick={() => setUserMenuOpen(!userMenuOpen)}
                                     className="flex items-center gap-2 glass-card px-3 py-1.5 hover:border-cyan-500/30 transition-all"
                                 >
                                     <div className="w-7 h-7 rounded-full bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center text-xs font-bold">
-                                        {profile?.name?.[0] || user.email?.[0]?.toUpperCase()}
+                                        {(profile?.name?.[0] || user?.email?.[0] || 'A').toUpperCase()}
                                     </div>
                                     <div className="text-left">
-                                        <p className="text-xs font-medium text-white leading-none">{profile?.name || 'User'}</p>
-                                        <p className="text-xs text-slate-400">{profile?.role}</p>
+                                        <p className="text-xs font-medium text-white leading-none">{profile?.name || (localAdminSession ? 'Administrator' : 'User')}</p>
+                                        <p className="text-xs text-slate-400">{profile?.role || (localAdminSession ? 'Admin' : 'User')}</p>
                                     </div>
                                     <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform ${userMenuOpen ? 'rotate-180' : ''}`} />
                                 </button>
@@ -167,18 +190,16 @@ export default function Navbar() {
                                     key={href}
                                     href={href}
                                     onClick={() => setIsOpen(false)}
-                                    className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${href === '/admin'
-                                        ? 'text-amber-400 hover:bg-amber-500/10'
-                                        : pathname === href
-                                            ? 'bg-cyan-500/20 text-cyan-400'
-                                            : 'text-slate-300 hover:bg-white/10 hover:text-white'
+                                    className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${isActiveLink(href)
+                                        ? 'bg-cyan-500/20 text-cyan-400'
+                                        : 'text-slate-300 hover:bg-white/10 hover:text-white'
                                         }`}
                                 >
                                     <Icon className="w-4 h-4" />
                                     {label}
                                 </Link>
                             ))}
-                            {user ? (
+                            {authenticated ? (
                                 <button
                                     onClick={handleLogout}
                                     className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm text-red-400 hover:bg-red-500/10 transition-all"

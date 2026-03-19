@@ -80,7 +80,8 @@ export default function AiRecommendationPage() {
                 typeof (error as { response?: { data?: { detail?: string } } }).response?.data?.detail === 'string'
                     ? (error as { response?: { data?: { detail?: string } } }).response?.data?.detail
                     : null;
-            toast.error(detail || 'Could not fetch route recommendation.');
+            const message = error instanceof Error ? error.message : null;
+            toast.error(detail || message || 'Could not fetch route recommendation.');
         } finally {
             setLoading(false);
         }

@@ -1,9 +1,9 @@
 """
-TraffixAI — Gemini AI Chatbot + Real OSRM Routing Engine
+TraffixAI — Gemini Chatbot + Real OSRM Routing Engine
 Uses:
-  - Google Gemini API for natural-language understanding & responses
+  - Gemini API for natural-language responses
   - OSRM (Open Source Routing Machine) for real road-accurate routes
-  - Nominatim (OpenStreetMap) for geocoding place names → coordinates
+  - Nominatim (OpenStreetMap) for geocoding place names -> coordinates
 """
 
 import os
@@ -16,28 +16,19 @@ from dataclasses import dataclass, field
 logger = logging.getLogger(__name__)
 
 # ─── Gemini Setup ─────────────────────────────────────────────────────────────
-_gemini_model = None
+def _get_gemini_config() -> Optional[dict]:
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash").strip()
 
-def _get_gemini():
-    global _gemini_model
-    if _gemini_model is not None:
-        return _gemini_model
-    try:
-        import google.generativeai as genai
-        api_key = os.getenv("GEMINI_API_KEY", "")
-        if not api_key:
-            logger.warning("GEMINI_API_KEY not set — chatbot will use rule-based fallback")
-            return None
-        genai.configure(api_key=api_key)
-        _gemini_model = genai.GenerativeModel(
-            "gemini-1.5-flash",
-            system_instruction=SYSTEM_PROMPT,
-        )
-        logger.info("Gemini 1.5 Flash model initialised ✓")
-        return _gemini_model
-    except Exception as e:
-        logger.error(f"Gemini init failed: {e}")
+    if not api_key:
+        logger.warning("GEMINI_API_KEY not set - chatbot will use rule-based fallback")
         return None
+
+    return {
+        "api_key": api_key,
+        "model": model,
+        "base_url": "https://generativelanguage.googleapis.com/v1beta",
+    }
 
 SYSTEM_PROMPT = """You are TraffixAI Assistant — an AI-powered traffic analysis and route recommendation chatbot.
 
@@ -350,12 +341,12 @@ class RouteAnalyser:
         ]
 
 
-# ─── Gemini-Powered Traffic Chatbot ─────────────────────────────────────────
+# ─── AI-Powered Traffic Chatbot ─────────────────────────────────────────────
 
 class TrafficChatbot:
     """
-    AI Traffic Chatbot powered by Google Gemini 1.5 Flash.
-    Falls back to rule-based responses when Gemini is unavailable.
+    AI Traffic Chatbot powered by Gemini API.
+    Falls back to rule-based responses when API is unavailable.
     Uses OSRM for real route data.
     """
 
@@ -369,7 +360,7 @@ class TrafficChatbot:
         detection_context: Optional[Dict[str, Any]] = None,
         history: Optional[List[Dict]] = None,
     ) -> Dict[str, Any]:
-        """Process a user message via Gemini AI + OSRM routing."""
+        """Process a user message via AI + OSRM routing."""
         import asyncio
 
         msg = message.strip()
@@ -393,35 +384,35 @@ class TrafficChatbot:
                 logger.error(f"Async route error: {e}")
                 routes = self.analyser._fallback_routes(origin, destination, detection_context, str(e))
 
-            # Use Gemini to generate a natural response about the routes
-            route_summary = self._format_routes_for_gemini(routes)
-            gemini_reply = self._ask_gemini(
+            # Use AI to generate a natural response about the routes
+            route_summary = self._format_routes_for_ai(routes)
+            ai_reply = self._ask_ai(
                 f"The user asked: '{msg}'\n\nHere are the real route options I found:\n{route_summary}\n\n"
                 f"Please present these routes to the user in a friendly way. Highlight the recommended one based on their preference. "
                 f"Keep it concise (under 150 words).",
                 history
             )
 
-            if not gemini_reply:
-                # Fallback without Gemini
+            if not ai_reply:
+                # Fallback without external AI API
                 best = routes[0] if routes else None
-                gemini_reply = (
+                ai_reply = (
                     f"🗺️ **Route Options: {routes[0]['from']} → {routes[0]['to']}**\n\n" if routes else "🗺️ **Route Options:**\n\n"
                 )
                 for r in routes:
-                    gemini_reply += (
+                    ai_reply += (
                         f"**{r['label']}** — {r['total_km']} km, ~{int(r['estimated_time_min'])} min\n"
                         f"- Risk: {r['risk_score']}/100 ({r['safety_rating']}) | Via: {', '.join(r['segments'][:3])}\n\n"
                     )
 
             return {
                 "type": "route",
-                "reply": gemini_reply,
+                "reply": ai_reply,
                 "routes": routes,
                 "suggestions": ["Show fastest route details", "Any safety warnings?", "Alternative routes"],
             }
 
-        # Non-route query — use Gemini directly
+        # Non-route query — use AI directly
         context_info = ""
         if self.context:
             context_info = (
@@ -430,20 +421,20 @@ class TrafficChatbot:
                 f"{self.context.get('violations', 0)} violations detected."
             )
 
-        gemini_reply = self._ask_gemini(
+        ai_reply = self._ask_ai(
             f"User message: '{msg}'{context_info}\n\nRespond helpfully about traffic, routes, or safety.",
             history
         )
 
-        if gemini_reply:
+        if ai_reply:
             suggestions = self._generate_suggestions(msg)
             return {
                 "type": "chat",
-                "reply": gemini_reply,
+                "reply": ai_reply,
                 "suggestions": suggestions,
             }
 
-        # Full fallback (no Gemini)
+        # Full fallback (no AI API)
         return self._rule_based_fallback(msg, detection_context)
 
     def _is_route_request(self, msg: str) -> bool:
@@ -494,8 +485,8 @@ class TrafficChatbot:
 
         return ("Current Location", "City Center")
 
-    def _format_routes_for_gemini(self, routes: List[Dict]) -> str:
-        """Format routes into a text summary for Gemini to interpret."""
+    def _format_routes_for_ai(self, routes: List[Dict]) -> str:
+        """Format routes into a text summary for AI interpretation."""
         lines = []
         for r in routes:
             lines.append(
@@ -507,22 +498,58 @@ class TrafficChatbot:
                 lines.append(f"  Warnings: {'; '.join(r['warnings'])}")
         return "\n".join(lines)
 
-    def _ask_gemini(self, prompt: str, history: List[Dict]) -> Optional[str]:
-        """Send a prompt to Gemini and get a response."""
-        model = _get_gemini()
-        if not model:
+    def _ask_ai(self, prompt: str, history: List[Dict]) -> Optional[str]:
+        """Send a prompt to Gemini API and get a response."""
+        cfg = _get_gemini_config()
+        if not cfg:
             return None
 
         try:
-            # Build chat history for context
-            gemini_history = []
+            # Convert chat history to Gemini content parts.
+            contents: list[dict[str, Any]] = []
             for msg in history[-6:]:
                 role = "user" if msg.get("role") == "user" else "model"
-                gemini_history.append({"role": role, "parts": [msg.get("content", "")]})
+                text = str(msg.get("content", "")).strip()
+                if not text:
+                    continue
+                contents.append(
+                    {
+                        "role": role,
+                        "parts": [{"text": text}],
+                    }
+                )
+            contents.append(
+                {
+                    "role": "user",
+                    "parts": [{"text": prompt}],
+                }
+            )
 
-            chat = model.start_chat(history=gemini_history)
-            response = chat.send_message(prompt)
-            return response.text.strip()
+            payload = {
+                "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+                "contents": contents,
+                "generationConfig": {
+                    "temperature": 0.2,
+                    "maxOutputTokens": 400,
+                },
+            }
+            url = f"{cfg['base_url']}/models/{cfg['model']}:generateContent?key={cfg['api_key']}"
+
+            with httpx.Client(timeout=30.0) as client:
+                resp = client.post(
+                    url,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+            candidates = data.get("candidates", [])
+            if not candidates:
+                return None
+            parts = candidates[0].get("content", {}).get("parts", [])
+            text_chunks = [str(p.get("text", "")) for p in parts if p.get("text")]
+            return ("\n".join(text_chunks)).strip() or None
         except Exception as e:
             logger.error(f"Gemini API error: {e}")
             return None
@@ -539,7 +566,7 @@ class TrafficChatbot:
         return ["Recommend a safe route", "Current risk level", "Analyse traffic data"]
 
     def _rule_based_fallback(self, msg: str, ctx: Optional[Dict]) -> Dict:
-        """Simple rule-based response when Gemini is unavailable."""
+        """Simple rule-based response when external AI API is unavailable."""
         msg_lower = msg.lower()
 
         if any(t in msg_lower for t in ["hi", "hello", "hey", "help"]):

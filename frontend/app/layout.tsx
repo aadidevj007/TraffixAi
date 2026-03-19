@@ -1,25 +1,29 @@
-import type { Metadata } from 'next'
-import { Inter, Space_Grotesk } from 'next/font/google'
+import type { Metadata, Viewport } from 'next'
+import { Lora } from 'next/font/google'
 import './globals.css'
 import { AuthProvider } from '@/contexts/AuthContext'
 import { Toaster } from 'react-hot-toast'
 import Navbar from '@/components/layout/Navbar'
+import AppBackgroundVideo from '@/components/layout/AppBackgroundVideo'
 
-const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
-const spaceGrotesk = Space_Grotesk({ subsets: ['latin'], variable: '--font-space-grotesk' })
+const lora = Lora({ subsets: ['latin'], variable: '--font-lora' })
 
 export const metadata: Metadata = {
   title: 'TraffixAI - AI-Powered Smart Traffic Surveillance & Accident Response',
   description: 'Advanced AI-based smart traffic surveillance, real-time accident detection, and intelligent response system powered by YOLOv8 deep learning.',
   keywords: 'traffic surveillance, accident detection, AI traffic management, smart city, CCTV monitoring',
   authors: [{ name: 'TraffixAI Team' }],
-  viewport: 'width=device-width, initial-scale=1',
-  themeColor: '#030712',
   openGraph: {
     title: 'TraffixAI - AI-Powered Traffic Surveillance',
     description: 'Real-time AI traffic monitoring and accident response system',
     type: 'website',
   },
+}
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  themeColor: '#030712',
 }
 
 export default function RootLayout({
@@ -29,10 +33,11 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark">
-      <body className={`${inter.variable} ${spaceGrotesk.variable} font-sans bg-dark-900 text-white antialiased`}>
+      <body className={`${lora.variable} font-sans text-white antialiased`}>
         <AuthProvider>
+          <AppBackgroundVideo />
           <Navbar />
-          <main>{children}</main>
+          <main className="relative z-10">{children}</main>
           <Toaster
             position="top-right"
             toastOptions={{

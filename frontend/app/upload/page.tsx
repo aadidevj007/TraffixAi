@@ -1,16 +1,19 @@
 'use client';
 
+import axios from 'axios';
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useRouter } from 'next/navigation';
+import { motion } from 'framer-motion';
 import {
-    Upload, Image as ImageIcon, Video, Calendar, Clock, FileText,
+    Upload, Image as ImageIcon, Video,
     CheckCircle, X, AlertCircle, Loader, Camera, AlertTriangle, ShieldX,
     Car, UserX, Gauge, Eye, Crosshair, Send, ChevronLeft, ChevronRight,
-    Play, Shield
+    Shield
 } from 'lucide-react';
 import api, { uploadImage, uploadVideo } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import LocationAutocompleteInput from '@/components/location/LocationAutocompleteInput';
+import { createSessionToken, saveUploadSession } from '@/lib/uploadGate';
 import toast from 'react-hot-toast';
 
 type Tab = 'image' | 'video';
@@ -46,6 +49,8 @@ export type DetectionResult = {
     objects?: Array<{ class: string; confidence: number; count: number }>;
     frames_analyzed?: number;
     total_frames?: number;
+    duration_seconds?: number;
+    analysis_sample_fps?: number;
     raw_violations?: any[];
     raw_accidents?: any[];
 };
@@ -57,6 +62,60 @@ function ensureRiskScore(result: DetectionResult): DetectionResult {
     if (!hasIncidents) return { ...result, risk_score: 0 };
     const derived = Math.min(100, Math.max(5, Math.round((result.accidents * 25) + (result.violations * 3) + (result.vehicles * 0.05))));
     return { ...result, risk_score: derived };
+}
+
+function compactUploadResult(raw: Record<string, any>, mediaType: Tab): Record<string, unknown> {
+    const base: Record<string, unknown> = {
+        id: raw?.id,
+        media_type: raw?.media_type ?? mediaType,
+        vehicles: Number(raw?.vehicles || 0),
+        pedestrians: Number(raw?.pedestrians || 0),
+        violations: Number(raw?.violations || 0),
+        accidents: Number(raw?.accidents || 0),
+        risk_score: Number(raw?.risk_score || 0),
+        location: raw?.location || '',
+        analyzed_at: raw?.analyzed_at || new Date().toISOString(),
+        processed_media_url: raw?.processed_media_url || '',
+        llm_judge: raw?.llm_judge || {},
+        judge: raw?.judge || {},
+        violation_types: Array.isArray(raw?.violation_types) ? raw.violation_types : [],
+        frames_analyzed: Number(raw?.frames_analyzed || 0),
+        total_frames: Number(raw?.total_frames || 0),
+        duration_seconds: Number(raw?.duration_seconds || 0),
+        confidence: Number(raw?.confidence || 0),
+    };
+
+    if (mediaType === 'image' && typeof raw?.annotated_image === 'string') {
+        base.annotated_image = raw.annotated_image;
+    }
+    return base;
+}
+
+function getUploadErrorMessage(error: unknown, media: 'image' | 'video'): string {
+    const fallback = media === 'video'
+        ? 'Video analysis failed. Please retry in a moment.'
+        : 'Image analysis failed. Please retry in a moment.';
+
+    if (!axios.isAxiosError(error)) {
+        return fallback;
+    }
+
+    const detail = error.response?.data?.detail;
+    if (typeof detail === 'string' && detail.trim()) {
+        return detail;
+    }
+
+    if (error.code === 'ECONNABORTED' || `${error.message || ''}`.toLowerCase().includes('timeout')) {
+        return media === 'video'
+            ? 'Video analysis is taking longer than expected. Please retry once the backend is ready.'
+            : 'Image analysis timed out. Please retry once the backend is ready.';
+    }
+
+    if (error.response?.status === 401) {
+        return 'Upload session was not authorized. Please refresh and try again.';
+    }
+
+    return fallback;
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms = 10000): Promise<T> {
@@ -208,8 +267,7 @@ const VIOLATION_ICON: Record<string, React.ElementType> = {
     'No Helmet': ShieldX, 'Speeding': Gauge, 'Wrong Way': Car, 'Signal Jump': AlertTriangle,
     'No Seatbelt': UserX, 'Excess Riders': UserX, 'Lane Change': Car, 'Jaywalking': UserX,
     'Tailgating': Car, 'Red Light': AlertTriangle, 'Illegal U-Turn': Car, 'Stopped Vehicle': Car,
-    'Uturn': Car, 'U-Turn': Car, 'Wrong Way Driving': Car, 'Excess Riders': UserX,
-    'Accident': AlertTriangle,
+    'Wrong Way Driving': Car, 'Accident': AlertTriangle,
     'default': Crosshair,
 };
 
@@ -222,6 +280,8 @@ function inferSeverity(v: ViolationType): ViolationType['severity'] {
     if (/jaywal|tailgat|lane/.test(label)) return 'medium';
     return 'low';
 }
+
+
 
 function ViolationBoxes({ types }: { types: ViolationType[] }) {
     if (!types || types.length === 0) return null;
@@ -329,7 +389,6 @@ function SendReportButton({ result, user, uploadDocId }:
    Page root
 ═══════════════════════════════════════════════════════════════════════ */
 export default function UploadPage() {
-    const [tab, setTab] = useState<Tab>('image');
     const { user } = useAuth();
 
     return (
@@ -342,29 +401,192 @@ export default function UploadPage() {
             </div>
 
             <div className="container-max py-8">
-                <div className="flex gap-2 mb-8">
-                    <button onClick={() => setTab('image')}
-                        className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium transition-all ${tab === 'image' ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white' : 'glass-card text-slate-300 hover:text-white hover:bg-white/10'}`}>
-                        <ImageIcon className="w-4 h-4" /> Image Upload
-                    </button>
-                    <button onClick={() => setTab('video')}
-                        className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium transition-all ${tab === 'video' ? 'bg-gradient-to-r from-purple-500 to-pink-600 text-white' : 'glass-card text-slate-300 hover:text-white hover:bg-white/10'}`}>
-                        <Video className="w-4 h-4" /> Video Analysis
+                <UnifiedUploadSection user={user} />
+            </div>
+        </div>
+    );
+}
+
+function UnifiedUploadSection({ user }: { user: any }) {
+    const router = useRouter();
+    const [location, setLocation] = useState('');
+
+    const [imageFile, setImageFile] = useState<File | null>(null);
+    const [imagePreview, setImagePreview] = useState<string | null>(null);
+
+    const [videoFile, setVideoFile] = useState<File | null>(null);
+    const [videoPreview, setVideoPreview] = useState<string | null>(null);
+
+    const [progress, setProgress] = useState(0);
+    const [loadingMedia, setLoadingMedia] = useState<Tab | null>(null);
+
+    const analyzeImage = async () => {
+        if (!imageFile) return toast.error('Please select an image');
+        const cleanedLocation = location.trim();
+        if (!cleanedLocation) return toast.error('Please enter location');
+
+        setLoadingMedia('image');
+        try {
+            const formData = new FormData();
+            formData.append('file', imageFile);
+            formData.append('location', cleanedLocation);
+            formData.append('user_id', user?.uid || 'anonymous');
+
+            const data = ensureRiskScore(await uploadImage(formData));
+            const token = createSessionToken();
+            saveUploadSession({
+                token,
+                createdAt: Date.now(),
+                mediaType: 'image',
+                fileName: imageFile.name,
+                result: compactUploadResult(data as unknown as Record<string, any>, 'image'),
+            });
+            toast.success('Analysis complete! Redirecting...');
+            router.push(`/verdict?token=${encodeURIComponent(token)}&reportId=${encodeURIComponent(String(data?.id || ''))}`);
+        } catch (error) {
+            toast.error(getUploadErrorMessage(error, 'image'));
+        } finally {
+            setLoadingMedia(null);
+        }
+    };
+
+    const analyzeVideo = async () => {
+        if (!videoFile) return toast.error('Please select a video file');
+        const cleanedLocation = location.trim();
+        if (!cleanedLocation) return toast.error('Please enter location');
+
+        setLoadingMedia('video');
+        setProgress(0);
+        const progressInterval = setInterval(() => setProgress((p) => Math.min(p + 3, 90)), 600);
+
+        try {
+            const formData = new FormData();
+            formData.append('file', videoFile);
+            formData.append('location', cleanedLocation);
+            formData.append('user_id', user?.uid || 'anonymous');
+            const data = ensureRiskScore(await uploadVideo(formData, setProgress));
+            clearInterval(progressInterval);
+            setProgress(100);
+            const token = createSessionToken();
+            saveUploadSession({
+                token,
+                createdAt: Date.now(),
+                mediaType: 'video',
+                fileName: videoFile.name,
+                result: compactUploadResult(data as unknown as Record<string, any>, 'video'),
+            });
+            toast.success(`Video analysis complete! ${data.frames_analyzed || '?'} frames analyzed. Redirecting...`);
+            router.push(`/verdict?token=${encodeURIComponent(token)}&reportId=${encodeURIComponent(String(data?.id || ''))}`);
+        } catch (error) {
+            clearInterval(progressInterval);
+            toast.error(getUploadErrorMessage(error, 'video'));
+        } finally {
+            setLoadingMedia(null);
+        }
+    };
+
+    return (
+        <div className="space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <div className="glass-card p-6 space-y-5">
+                    <h3 className="font-semibold text-white flex items-center gap-2">
+                        <ImageIcon className="w-4 h-4 text-cyan-400" /> Image Upload
+                    </h3>
+                    <div
+                        className="relative border-2 border-dashed border-cyan-500/30 rounded-2xl p-8 text-center hover:border-cyan-400/60 transition-colors cursor-pointer"
+                        onClick={() => document.getElementById('image-input-unified')?.click()}
+                    >
+                        <input
+                            id="image-input-unified"
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) => {
+                                const f = e.target.files?.[0];
+                                if (f) {
+                                    setImageFile(f);
+                                    setImagePreview(URL.createObjectURL(f));
+                                }
+                            }}
+                            className="hidden"
+                        />
+                        {imagePreview ? (
+                            <img src={imagePreview} alt="Image preview" className="max-h-56 mx-auto rounded-xl object-contain" />
+                        ) : (
+                            <>
+                                <Camera className="w-10 h-10 text-slate-500 mx-auto mb-3" />
+                                <p className="text-slate-300 font-medium">Drop image here or click to browse</p>
+                                <p className="text-slate-500 text-sm mt-1">PNG, JPG, JPEG up to 10MB</p>
+                            </>
+                        )}
+                    </div>
+                    <button
+                        onClick={analyzeImage}
+                        disabled={loadingMedia !== null || !imageFile}
+                        className="btn-primary w-full flex items-center justify-center gap-2 py-3 disabled:opacity-50"
+                    >
+                        {loadingMedia === 'image' ? <><Loader className="w-4 h-4 animate-spin" /> Analyzing...</> : <><Upload className="w-4 h-4" />Analyze Image With AI</>}
                     </button>
                 </div>
 
-                <AnimatePresence mode="wait">
-                    {tab === 'image' ? (
-                        <motion.div key="image" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 10 }}>
-                            <ImageUploadSection user={user} />
-                        </motion.div>
-                    ) : (
-                        <motion.div key="video" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }}>
-                            <VideoUploadSection user={user} />
-                        </motion.div>
+                <div className="glass-card p-6 space-y-5">
+                    <h3 className="font-semibold text-white flex items-center gap-2">
+                        <Video className="w-4 h-4 text-purple-400" /> Video Upload
+                    </h3>
+                    <div
+                        className="relative border-2 border-dashed border-purple-500/30 rounded-2xl p-8 text-center hover:border-purple-400/60 transition-colors cursor-pointer"
+                        onClick={() => document.getElementById('video-input-unified')?.click()}
+                    >
+                        <input
+                            id="video-input-unified"
+                            type="file"
+                            accept="video/*"
+                            onChange={(e) => {
+                                const f = e.target.files?.[0];
+                                if (f) {
+                                    setVideoFile(f);
+                                    setVideoPreview(URL.createObjectURL(f));
+                                }
+                            }}
+                            className="hidden"
+                        />
+                        {videoPreview ? (
+                            <video src={videoPreview} className="max-h-56 mx-auto rounded-xl" muted playsInline />
+                        ) : (
+                            <>
+                                <Video className="w-10 h-10 text-slate-500 mx-auto mb-3" />
+                                <p className="text-slate-300 font-medium">Drop CCTV video here or click to browse</p>
+                                <p className="text-slate-500 text-sm mt-1">MP4, AVI, MOV up to 500MB</p>
+                            </>
+                        )}
+                    </div>
+                    {loadingMedia === 'video' && (
+                        <div>
+                            <div className="flex justify-between text-xs text-slate-400 mb-2">
+                                <span>Uploading &amp; Analyzing...</span><span>{progress}%</span>
+                            </div>
+                            <div className="progress-bar">
+                                <div className="progress-fill bg-gradient-to-r from-purple-500 to-pink-500 transition-all duration-300" style={{ width: `${progress}%` }} />
+                            </div>
+                        </div>
                     )}
-                </AnimatePresence>
+                    <button
+                        onClick={analyzeVideo}
+                        disabled={loadingMedia !== null || !videoFile}
+                        className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-purple-500 to-pink-600 text-white font-semibold px-6 py-3 rounded-xl hover:from-purple-400 hover:to-pink-500 transition-all disabled:opacity-50"
+                    >
+                        {loadingMedia === 'video' ? <><Loader className="w-4 h-4 animate-spin" /> Processing...</> : <><Video className="w-4 h-4" />Analyze Video To AI</>}
+                    </button>
+                </div>
             </div>
+
+            <div className="glass-card p-6">
+                <LocationAutocompleteInput
+                    value={location}
+                    onChange={setLocation}
+                    placeholder="Location"
+                />
+            </div>
+
         </div>
     );
 }
@@ -415,9 +637,10 @@ function RiskBar({ score }: { score: number }) {
    Image Section
 ═══════════════════════════════════════════════════════════════════════ */
 function ImageUploadSection({ user }: { user: any }) {
+    const router = useRouter();
     const [file, setFile] = useState<File | null>(null);
     const [preview, setPreview] = useState<string | null>(null);
-    const [metadata, setMetadata] = useState({ location: '', date: '', time: '', description: '' });
+    const [location, setLocation] = useState('');
     const [result, setResult] = useState<DetectionResult | null>(null);
     const [loading, setLoading] = useState(false);
     const [uploadDocId, setUploadDocId] = useState<string | undefined>();
@@ -437,25 +660,32 @@ function ImageUploadSection({ user }: { user: any }) {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!file) return toast.error('Please select an image');
-        if (!metadata.location) return toast.error('Please enter location');
+        const cleanedLocation = location.trim();
+        if (!cleanedLocation) return toast.error('Please enter location');
         setLoading(true);
         try {
             const formData = new FormData();
             formData.append('file', file);
-            formData.append('location', metadata.location);
-            formData.append('date', metadata.date);
-            formData.append('time', metadata.time);
-            formData.append('description', metadata.description);
+            formData.append('location', cleanedLocation);
             formData.append('user_id', user?.uid || 'anonymous');
 
             const data = ensureRiskScore(await uploadImage(formData));
             setResult(data);
             setUploadDocId(data?.id);
-            toast.success('Analysis complete!');
-        } catch {
+            const token = createSessionToken();
+            saveUploadSession({
+                token,
+                createdAt: Date.now(),
+                mediaType: 'image',
+                fileName: file.name,
+                result: compactUploadResult(data as unknown as Record<string, any>, 'image'),
+            });
+            toast.success('Analysis complete! Redirecting...');
+            router.push(`/verdict?token=${encodeURIComponent(token)}&reportId=${encodeURIComponent(String(data?.id || ''))}`);
+        } catch (error) {
             setResult(null);
             setUploadDocId(undefined);
-            toast.error('Analysis failed. Please try again.');
+            toast.error(getUploadErrorMessage(error, 'image'));
         } finally { setLoading(false); }
     };
 
@@ -492,28 +722,13 @@ function ImageUploadSection({ user }: { user: any }) {
                     </div>
 
                     <form onSubmit={handleSubmit} className="glass-card p-6 space-y-4">
-                        <h3 className="font-semibold text-white flex items-center gap-2">
-                            <FileText className="w-4 h-4 text-cyan-400" /> Incident Details
-                        </h3>
                         <LocationAutocompleteInput
-                            value={metadata.location}
-                            onChange={(nextLocation) => setMetadata({ ...metadata, location: nextLocation })}
-                            placeholder="Location (e.g., MG Road, Signal No. 4)"
+                            value={location}
+                            onChange={setLocation}
+                            placeholder="Location"
                         />
-                        <div className="grid grid-cols-2 gap-3">
-                            <div className="relative">
-                                <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                                <input type="date" value={metadata.date} onChange={(e) => setMetadata({ ...metadata, date: e.target.value })} className="input-field pl-10" />
-                            </div>
-                            <div className="relative">
-                                <Clock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                                <input type="time" value={metadata.time} onChange={(e) => setMetadata({ ...metadata, time: e.target.value })} className="input-field pl-10" />
-                            </div>
-                        </div>
-                        <textarea placeholder="Description of incident..." value={metadata.description}
-                            onChange={(e) => setMetadata({ ...metadata, description: e.target.value })} className="input-field resize-none h-20" />
                         <button type="submit" disabled={loading || !file} className="btn-primary w-full flex items-center justify-center gap-2 py-3">
-                            {loading ? <><Loader className="w-4 h-4 animate-spin" /> Analyzing...</> : <><Upload className="w-4 h-4" />Analyze Image</>}
+                            {loading ? <><Loader className="w-4 h-4 animate-spin" /> Analyzing...</> : <><Upload className="w-4 h-4" />Analyze Image With AI</>}
                         </button>
                     </form>
                 </div>
@@ -590,6 +805,7 @@ function ImageUploadSection({ user }: { user: any }) {
    Video Section
 ═══════════════════════════════════════════════════════════════════════ */
 function VideoUploadSection({ user }: { user: any }) {
+    const router = useRouter();
     const [file, setFile] = useState<File | null>(null);
     const [videoPreview, setVideoPreview] = useState<string | null>(null);
     const [progress, setProgress] = useState(0);
@@ -606,6 +822,8 @@ function VideoUploadSection({ user }: { user: any }) {
 
     const handleAnalyze = async () => {
         if (!file) return toast.error('Please select a video file');
+        const cleanedLocation = location.trim();
+        if (!cleanedLocation) return toast.error('Please enter location');
         setLoading(true); setProgress(0);
 
         // Simulate progress ticks while backend processes
@@ -616,7 +834,7 @@ function VideoUploadSection({ user }: { user: any }) {
         try {
             const formData = new FormData();
             formData.append('file', file);
-            formData.append('location', location);
+            formData.append('location', cleanedLocation);
             formData.append('user_id', user?.uid || 'anonymous');
             const data = ensureRiskScore(await uploadVideo(formData, setProgress));
             clearInterval(progressInterval);
@@ -624,12 +842,21 @@ function VideoUploadSection({ user }: { user: any }) {
             setResult(data);
             setFrameIndex(0);
             setUploadDocId(data?.id);
-            toast.success(`Video analysis complete! ${data.frames_analyzed || '?'} frames analyzed.`);
-        } catch {
+            const token = createSessionToken();
+            saveUploadSession({
+                token,
+                createdAt: Date.now(),
+                mediaType: 'video',
+                fileName: file.name,
+                result: compactUploadResult(data as unknown as Record<string, any>, 'video'),
+            });
+            toast.success(`Video analysis complete! ${data.frames_analyzed || '?'} frames analyzed. Redirecting...`);
+            router.push(`/verdict?token=${encodeURIComponent(token)}&reportId=${encodeURIComponent(String(data?.id || ''))}`);
+        } catch (error) {
             clearInterval(progressInterval);
             setResult(null);
             setUploadDocId(undefined);
-            toast.error('Analysis failed. Please try again.');
+            toast.error(getUploadErrorMessage(error, 'video'));
         } finally { setLoading(false); }
     };
 
@@ -648,100 +875,47 @@ function VideoUploadSection({ user }: { user: any }) {
 
     return (
         <div className="space-y-8">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                {/* Upload form */}
-                <div className="space-y-6">
-                    <div className="border-2 border-dashed border-white/20 rounded-2xl p-10 text-center hover:border-purple-500/50 transition-colors cursor-pointer"
-                        onClick={() => document.getElementById('video-input')?.click()}>
-                        <input id="video-input" type="file" accept="video/*" onChange={handleFileChange} className="hidden" />
-                        <Video className="w-12 h-12 text-slate-500 mx-auto mb-3" />
-                        {file ? (
-                            <div>
-                                <p className="text-purple-400 font-medium">{file.name}</p>
-                                <p className="text-slate-500 text-sm">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
-                                {videoPreview && (
-                                    <video src={videoPreview} className="mt-3 max-h-32 mx-auto rounded-lg" muted playsInline />
-                                )}
-                            </div>
-                        ) : (
-                            <div>
-                                <p className="text-slate-300 font-medium">Drop CCTV video here or click to browse</p>
-                                <p className="text-slate-500 text-sm mt-1">MP4, AVI, MOV up to 500MB</p>
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="glass-card p-6 space-y-4">
-                        <LocationAutocompleteInput
-                            value={location}
-                            onChange={setLocation}
-                            placeholder="Camera location"
-                        />
-                        {(loading || progress > 0) && (
-                            <div>
-                                <div className="flex justify-between text-xs text-slate-400 mb-2">
-                                    <span>Uploading &amp; Analyzing frames...</span><span>{progress}%</span>
-                                </div>
-                                <div className="progress-bar">
-                                    <div className="progress-fill bg-gradient-to-r from-purple-500 to-pink-500 transition-all duration-300" style={{ width: `${progress}%` }} />
-                                </div>
-                            </div>
-                        )}
-                        <button onClick={handleAnalyze} disabled={loading || !file}
-                            className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-purple-500 to-pink-600 text-white font-semibold px-6 py-3 rounded-xl hover:from-purple-400 hover:to-pink-500 transition-all disabled:opacity-50">
-                            {loading ? <><Loader className="w-4 h-4 animate-spin" /> Processing Frames...</> : <><Video className="w-4 h-4" />Analyze Video</>}
-                        </button>
-                    </div>
-                </div>
-
-                {/* Results */}
-                <div>
-                    {result ? (
-                        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
-                            <div className="glass-card p-6">
-                                <h3 className="font-display font-semibold text-white mb-6 flex items-center gap-2">
-                                    <CheckCircle className="w-5 h-5 text-emerald-400" /> Video Analysis Results
-                                    {result.confidence && (
-                                        <span className="badge-success ml-auto">Confidence: {(result.confidence * 100).toFixed(0)}%</span>
-                                    )}
-                                </h3>
-
-                                {result.frames_analyzed !== undefined && (
-                                    <div className="flex items-center gap-2 mb-4 text-xs text-slate-400 bg-white/5 rounded-lg px-3 py-2">
-                                        <Play className="w-3 h-3 text-purple-400" />
-                                        <span>{result.frames_analyzed} frames analyzed of {result.total_frames} total</span>
-                                    </div>
-                                )}
-
-                                <StatCards result={result} />
-                                {result.violation_types && <ViolationBoxes types={result.violation_types} />}
-                                {result.risk_score !== undefined && <RiskBar score={result.risk_score} />}
-                            </div>
-
-                            {result.objects && result.objects.length > 0 && (
-                                <div className="glass-card p-6">
-                                    <h4 className="font-semibold text-white mb-4">Detected Objects (cumulative)</h4>
-                                    <div className="space-y-2">
-                                        {result.objects.map((obj) => (
-                                            <div key={obj.class} className="flex items-center justify-between py-2 border-b border-white/5 last:border-0">
-                                                <span className="text-slate-300 capitalize">{obj.class}</span>
-                                                <div className="flex items-center gap-3">
-                                                    <span className="badge-info">×{obj.count}</span>
-                                                    <span className="text-xs text-slate-400">{(obj.confidence * 100).toFixed(0)}%</span>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
+            <div className="space-y-6">
+                <div className="border-2 border-dashed border-white/20 rounded-2xl p-10 text-center hover:border-purple-500/50 transition-colors cursor-pointer"
+                    onClick={() => document.getElementById('video-input')?.click()}>
+                    <input id="video-input" type="file" accept="video/*" onChange={handleFileChange} className="hidden" />
+                    <Video className="w-12 h-12 text-slate-500 mx-auto mb-3" />
+                    {file ? (
+                        <div>
+                            <p className="text-purple-400 font-medium">{file.name}</p>
+                            <p className="text-slate-500 text-sm">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
+                            {videoPreview && (
+                                <video src={videoPreview} className="mt-3 max-h-32 mx-auto rounded-lg" muted playsInline />
                             )}
-                        </motion.div>
+                        </div>
                     ) : (
-                        <div className="glass-card p-12 text-center h-full flex flex-col items-center justify-center min-h-64">
-                            <Video className="w-12 h-12 text-slate-600 mx-auto mb-4" />
-                            <p className="text-slate-400">Upload a CCTV video for frame-by-frame AI analysis</p>
-                            <p className="text-slate-500 text-sm mt-2">Each frame is analyzed for violations, accidents, and tracking</p>
+                        <div>
+                            <p className="text-slate-300 font-medium">Drop CCTV video here or click to browse</p>
+                            <p className="text-slate-500 text-sm mt-1">MP4, AVI, MOV up to 500MB</p>
                         </div>
                     )}
+                </div>
+
+                <div className="glass-card p-6 space-y-4">
+                    <LocationAutocompleteInput
+                        value={location}
+                        onChange={setLocation}
+                        placeholder="Location"
+                    />
+                    {(loading || progress > 0) && (
+                        <div>
+                            <div className="flex justify-between text-xs text-slate-400 mb-2">
+                                <span>Uploading &amp; Analyzing frames...</span><span>{progress}%</span>
+                            </div>
+                            <div className="progress-bar">
+                                <div className="progress-fill bg-gradient-to-r from-purple-500 to-pink-500 transition-all duration-300" style={{ width: `${progress}%` }} />
+                            </div>
+                        </div>
+                    )}
+                    <button onClick={handleAnalyze} disabled={loading || !file}
+                        className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-purple-500 to-pink-600 text-white font-semibold px-6 py-3 rounded-xl hover:from-purple-400 hover:to-pink-500 transition-all disabled:opacity-50">
+                        {loading ? <><Loader className="w-4 h-4 animate-spin" /> Processing Frames...</> : <><Video className="w-4 h-4" />Analyze Video To AI</>}
+                    </button>
                 </div>
             </div>
 
@@ -803,6 +977,7 @@ function VideoUploadSection({ user }: { user: any }) {
                     uploadDocId={uploadDocId}
                 />
             )}
+
         </div>
     );
 }
