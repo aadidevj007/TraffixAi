@@ -554,7 +554,7 @@ index 129a527..f215a5c 100644
 +    sid = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
 +    token = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
 +    from_whatsapp = os.getenv("TWILIO_WHATSAPP_FROM", "whatsapp:+14155238886").strip()
-+    to_whatsapp = os.getenv("EMERGENCY_WHATSAPP_TO", "whatsapp:+916374411016").strip()
++    to_whatsapp = os.getenv("EMERGENCY_WHATSAPP_TO", "whatsapp:+917593014047").strip()
 +    if to_whatsapp.startswith("+"):
 +        to_whatsapp = f"whatsapp:{to_whatsapp}"
 +    if not sid or not token or TwilioClient is None:

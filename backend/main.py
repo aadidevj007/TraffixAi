@@ -465,15 +465,34 @@ def _processed_media_url(processed_path: str) -> str:
     return f"/processed/{Path(processed_path).name}"
 
 
+def _normalize_whatsapp_address(raw: str, *, default: str = "") -> str:
+    value = (raw or default).strip()
+    if not value:
+        return ""
+    if value.startswith("whatsapp:"):
+        return value
+    if value.startswith("+"):
+        return f"whatsapp:{value}"
+    return f"whatsapp:+{value}"
+
+
 def _send_emergency_whatsapp(*, location: str, severity: str) -> dict[str, Any]:
     sid = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
     token = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
-    from_whatsapp = os.getenv("TWILIO_WHATSAPP_FROM", "whatsapp:+14155238886").strip()
-    to_whatsapp = os.getenv("EMERGENCY_WHATSAPP_TO", "whatsapp:+916374411016").strip()
-    if to_whatsapp.startswith("+"):
-        to_whatsapp = f"whatsapp:{to_whatsapp}"
+    from_whatsapp = _normalize_whatsapp_address(
+        os.getenv("TWILIO_WHATSAPP_FROM", ""),
+        default="whatsapp:+14155238886",
+    )
+    to_whatsapp = _normalize_whatsapp_address(
+        os.getenv("EMERGENCY_WHATSAPP_TO", ""),
+        default="",
+    )
     if not sid or not token or TwilioClient is None:
         return {"sent": False, "reason": "twilio_not_configured"}
+    if not from_whatsapp:
+        return {"sent": False, "reason": "missing_twilio_whatsapp_from"}
+    if not to_whatsapp:
+        return {"sent": False, "reason": "missing_emergency_whatsapp_to"}
 
     body = (
         "TraffixAI Emergency Alert\n"
@@ -490,7 +509,19 @@ def _send_emergency_whatsapp(*, location: str, severity: str) -> dict[str, Any]:
         )
         return {"sent": True, "sid": msg.sid, "to": to_whatsapp}
     except TwilioException as exc:
-        return {"sent": False, "reason": str(exc)}
+        return {
+            "sent": False,
+            "reason": str(exc),
+            "from": from_whatsapp,
+            "to": to_whatsapp,
+        }
+    except Exception as exc:
+        return {
+            "sent": False,
+            "reason": f"{type(exc).__name__}: {exc}",
+            "from": from_whatsapp,
+            "to": to_whatsapp,
+        }
 
 
 async def _safe_run_llm_judge(
@@ -1215,6 +1246,8 @@ def _report_to_result_payload(row: dict[str, Any]) -> dict[str, Any]:
         "events": detection.get("events", []),
         "detection_boxes": detection.get("detection_boxes", []),
         "objects": detection.get("objects", []),
+        "annotated_image": detection.get("annotated_image", ""),
+        "annotated_frames": detection.get("annotated_frames", []),
         "confidence": float(detection.get("confidence", 0) or 0),
         "processed_media_url": processed_url,
         "llm_judge": row.get("llm_judge", {}) or {},
@@ -1436,6 +1469,8 @@ def get_reports(
         "detection.risk_score": 1,
         "detection.confidence": 1,
         "detection.violation_types": 1,
+        "detection.annotated_image": 1,
+        "detection.annotated_frames": 1,
         "judge": 1,
         "llm_judge": 1,
     }
@@ -1532,6 +1567,8 @@ def get_admin_requests(
         "detection.risk_score": 1,
         "detection.confidence": 1,
         "detection.violation_types": 1,
+        "detection.annotated_image": 1,
+        "detection.annotated_frames": 1,
         "judge": 1,
         "llm_judge": 1,
     }

@@ -172,20 +172,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
             setUser(firebaseUser);
             if (firebaseUser) {
+                setLoading(false);
                 try {
                     const profileData = await fetchOrCreateProfile(firebaseUser);
-                    await syncUserToBackend({
+                    void syncUserToBackend({
                         name: profileData.name || firebaseUser.displayName || 'User',
                         email: profileData.email || firebaseUser.email || undefined,
                         role: profileData.role,
+                    }).catch((err) => {
+                        console.error('User sync error:', err);
                     });
                 } catch (err) {
                     console.error('Profile fetch error:', err);
                 }
             } else {
                 setProfile(null);
+                setLoading(false);
             }
-            setLoading(false);
         });
         return unsub;
     }, []);

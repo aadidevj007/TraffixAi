@@ -25,7 +25,7 @@ export default function LoginPage() {
     if (authLoading || user) {
         return (
             <div className="min-h-screen bg-dark-900 flex items-center justify-center">
-                <div className="w-8 h-8 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+                <div className="w-8 h-8 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
             </div>
         );
     }
@@ -52,31 +52,36 @@ export default function LoginPage() {
     return (
         <div className="min-h-screen bg-dark-900 flex items-center justify-center px-4 overflow-hidden relative">
             <video
-                className="absolute inset-0 w-full h-full object-cover opacity-35"
+                className="absolute inset-0 w-full h-full object-cover opacity-40"
                 src="/videos/login.mp4"
                 autoPlay
                 muted
                 loop
                 playsInline
             />
-            <div className="absolute inset-0 bg-gradient-radial from-cyan-500/5 via-transparent to-transparent" />
-            <div className="absolute inset-0 bg-dark-900/65" />
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(248,113,113,0.18),transparent_28%),radial-gradient(circle_at_bottom_left,rgba(190,24,93,0.2),transparent_30%)]" />
+            <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(6,3,3,0.88),rgba(14,4,4,0.72),rgba(5,3,3,0.92))]" />
+            <div className="absolute inset-0 admin-noise opacity-60" />
 
             <motion.div
                 initial={{ opacity: 0, y: 30 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5 }}
+                transition={{ duration: 0.55, ease: 'easeOut' }}
                 className="w-full max-w-md relative z-10"
             >
                 {/* Logo */}
                 <div className="text-center mb-10">
                     <BrandLogo href="/" size="md" className="mb-6" />
                     <h1 className="text-3xl font-display font-bold text-white mb-2">Welcome</h1>
-                    <p className="text-slate-400">Sign in to continue</p>
+                    <p className="text-rose-100/70">Sign in to continue</p>
                 </div>
 
                 {/* Google Sign-In Card */}
-                <div className="glass-card p-8 border border-white/10 space-y-6">
+                <div className="glass-card p-8 border border-red-500/20 space-y-6 shadow-[0_20px_80px_rgba(0,0,0,0.5)]">
+                    <div className="rounded-2xl border border-red-500/20 bg-[linear-gradient(135deg,rgba(127,29,29,0.38),rgba(24,24,27,0.1))] p-4">
+                        <p className="text-xs uppercase tracking-[0.35em] text-red-200/80">Citywide Access</p>
+                        <p className="mt-2 text-sm text-rose-50/80">Enter the traffic intelligence network, review incidents, and manage safety workflows in one place.</p>
+                    </div>
 
                     {/* Google Button */}
                     <button
@@ -111,11 +116,11 @@ export default function LoginPage() {
                     {/* Admin Login Link */}
                     <Link
                         href="/admin-login"
-                        className="w-full flex items-center justify-center gap-2 border border-white/20 text-slate-300
-                       px-6 py-3.5 rounded-xl hover:bg-white/10 hover:border-white/30 hover:text-white
+                        className="w-full flex items-center justify-center gap-2 border border-red-500/20 text-slate-300
+                       px-6 py-3.5 rounded-xl hover:bg-red-500/10 hover:border-red-500/30 hover:text-white
                        transition-all duration-200 font-medium text-sm group"
                     >
-                        <Shield className="w-4 h-4 text-cyan-400 group-hover:text-cyan-300 transition-colors" />
+                        <Shield className="w-4 h-4 text-red-300 group-hover:text-red-200 transition-colors" />
                         Admin Login (Username & Password)
                         <ArrowRight className="w-3.5 h-3.5 ml-auto opacity-60 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all" />
                     </Link>
@@ -123,16 +128,16 @@ export default function LoginPage() {
                     {/* Info */}
                     <p className="text-center text-xs text-slate-500 leading-relaxed">
                         By signing in you agree to our{' '}
-                        <Link href="/terms" className="text-cyan-400 hover:underline">Terms of Service</Link>
+                        <Link href="/terms" className="text-red-300 hover:underline">Terms of Service</Link>
                         {' '}and{' '}
-                        <Link href="/privacy" className="text-cyan-400 hover:underline">Privacy Policy</Link>.
+                        <Link href="/privacy" className="text-red-300 hover:underline">Privacy Policy</Link>.
                     </p>
                 </div>
 
                 {/* Feature badges */}
                 <div className="mt-6 grid grid-cols-3 gap-3">
                     {['Secure OAuth', 'Role-Based Access', 'Instant Dashboard'].map((f) => (
-                        <div key={f} className="glass-card p-3 text-center border border-white/5">
+                        <div key={f} className="glass-card p-3 text-center border border-red-500/10">
                             <p className="text-xs text-slate-400">{f}</p>
                         </div>
                     ))}

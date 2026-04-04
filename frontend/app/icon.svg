@@ -1,18 +1,62 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#06b6d4"/>
-      <stop offset="55%" stop-color="#3b82f6"/>
-      <stop offset="100%" stop-color="#6366f1"/>
+    <linearGradient id="shieldOuter" x1="16" y1="14" x2="101" y2="105" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5EE7FF"/>
+      <stop offset="0.55" stop-color="#1D9BFF"/>
+      <stop offset="1" stop-color="#E5E7EB"/>
     </linearGradient>
+    <linearGradient id="shieldInner" x1="28" y1="24" x2="94" y2="94" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0B1936"/>
+      <stop offset="1" stop-color="#050814"/>
+    </linearGradient>
+    <linearGradient id="roadBlue" x1="28" y1="90" x2="63" y2="53" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6FE7FF"/>
+      <stop offset="1" stop-color="#1A7BFF"/>
+    </linearGradient>
+    <linearGradient id="roadRed" x1="56" y1="95" x2="80" y2="57" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FF7A59"/>
+      <stop offset="1" stop-color="#FF334F"/>
+    </linearGradient>
+    <linearGradient id="lensRing" x1="75" y1="24" x2="110" y2="56" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F8FAFC"/>
+      <stop offset="0.38" stop-color="#A5B4FC"/>
+      <stop offset="0.72" stop-color="#0F172A"/>
+      <stop offset="1" stop-color="#020617"/>
+    </linearGradient>
+    <radialGradient id="lensCore" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(92 40) rotate(90) scale(13)">
+      <stop stop-color="#8BE8FF"/>
+      <stop offset="0.4" stop-color="#1D9BFF"/>
+      <stop offset="1" stop-color="#050B1A"/>
+    </radialGradient>
+    <filter id="softGlow">
+      <feGaussianBlur stdDeviation="3.5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
   </defs>
-  <rect x="4" y="4" width="56" height="56" rx="14" fill="url(#g)"/>
-  <path d="M10 45c7-8 14-12 22-12s15 4 22 12" fill="none" stroke="#ffffff" stroke-width="3.8" stroke-linecap="round"/>
-  <path d="M21 30l3-6h16l3 6" fill="none" stroke="#ffffff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
-  <rect x="19" y="30" width="26" height="10" rx="4" fill="none" stroke="#ffffff" stroke-width="3.2"/>
-  <circle cx="24" cy="43" r="2.9" fill="#7ef9ff"/>
-  <circle cx="40" cy="43" r="2.9" fill="#7ef9ff"/>
-  <path d="M10 17h10M44 17h10M20 11v10M44 11v10" fill="none" stroke="#d8f9ff" stroke-width="2.2" stroke-linecap="round"/>
-  <circle cx="20" cy="10" r="1.9" fill="#d8f9ff"/>
-  <circle cx="44" cy="10" r="1.9" fill="#d8f9ff"/>
+  <path d="M60 10C47 18 34 20 22 21v34c0 21 14 39 38 53 24-14 38-32 38-53V21C86 20 73 18 60 10Z" fill="url(#shieldOuter)"/>
+  <path d="M60 18C49 25 38 27 29 28v27c0 17 11 32 31 45 20-13 31-28 31-45V28c-9-1-20-3-31-10Z" fill="url(#shieldInner)"/>
+  <rect x="47" y="42" width="4" height="20" rx="1" fill="#0EA5FF"/>
+  <rect x="54" y="33" width="6" height="29" rx="1" fill="#38BDF8"/>
+  <rect x="63" y="39" width="4" height="23" rx="1" fill="#2563EB"/>
+  <rect x="70" y="46" width="3" height="16" rx="1" fill="#38BDF8"/>
+  <path d="M24 88c14-4 25-17 38-20" stroke="url(#roadBlue)" stroke-width="7" stroke-linecap="round" filter="url(#softGlow)"/>
+  <path d="M59 70c8 2 16 11 23 24" stroke="url(#roadRed)" stroke-width="6" stroke-linecap="round" filter="url(#softGlow)"/>
+  <path d="M46 86c5-11 10-18 18-23" stroke="#E2E8F0" stroke-width="4" stroke-linecap="round" opacity="0.85"/>
+  <path d="M48 79 51 75M55 71 58 67M62 63 65 59" stroke="#F8FAFC" stroke-width="1.8" stroke-linecap="round" opacity="0.95"/>
+  <rect x="10" y="46" width="5" height="5" fill="#33D7FF" opacity="0.9"/>
+  <rect x="18" y="53" width="4" height="4" fill="#0EA5FF" opacity="0.9"/>
+  <rect x="13" y="61" width="5" height="5" fill="#38BDF8" opacity="0.9"/>
+  <rect x="23" y="60" width="3.5" height="3.5" fill="#5EE7FF" opacity="0.9"/>
+  <rect x="18" y="69" width="4.5" height="4.5" fill="#1D9BFF" opacity="0.9"/>
+  <ellipse cx="92" cy="40" rx="24" ry="20" fill="url(#lensRing)"/>
+  <ellipse cx="92" cy="40" rx="18" ry="15" fill="#071121"/>
+  <circle cx="92" cy="40" r="11" fill="url(#lensCore)"/>
+  <circle cx="92" cy="40" r="5.5" fill="#020617"/>
+  <circle cx="92" cy="40" r="2.5" fill="#7DD3FC"/>
+  <circle cx="83" cy="35" r="2" fill="#F8FAFC" opacity="0.95"/>
+  <circle cx="76" cy="44" r="1.7" fill="#FF3353" opacity="0.95"/>
+  <path d="M75 31c2-5 10-9 21-9" stroke="#0F172A" stroke-width="3" stroke-linecap="round" opacity="0.8"/>
 </svg>

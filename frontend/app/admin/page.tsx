@@ -3,9 +3,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
+    Activity,
     CheckCircle2,
     Clock3,
     Eye,
+    Gauge,
+    ListChecks,
     RefreshCw,
     XCircle,
     MapPin,
@@ -15,12 +18,14 @@ import {
     Siren,
     MessageCircle,
     Loader,
+    Orbit,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter, useSearchParams } from 'next/navigation';
 import toast from 'react-hot-toast';
 import AdminTrafficCharts from '@/components/charts/AdminTrafficCharts';
 import { getAdminRequests, updateAdminRequestStatus, sendAdminEmergency } from '@/lib/api';
+import { toAbsoluteMediaUrl, toDisplayImageSrc } from '@/lib/media';
 
 type ViolationJudge = {
     label?: string;
@@ -72,6 +77,8 @@ type UploadRecord = {
         events?: Array<Record<string, unknown>>;
         detection_boxes?: Array<Record<string, unknown>>;
         objects?: Array<{ class?: string; count?: number; confidence?: number }>;
+        annotated_image?: string;
+        annotated_frames?: string[];
     };
     judge?: JudgeData;
     llm_judge?: LLMJudge;
@@ -79,8 +86,6 @@ type UploadRecord = {
 };
 
 type AdminTab = 'dashboard' | 'pending' | 'accepted' | 'all';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001';
 
 function formatEventLabel(value: unknown): string {
     return String(value || 'unknown')
@@ -121,20 +126,6 @@ function toDateLabel(createdAt: string | undefined): string {
     return 'N/A';
 }
 
-function toMediaUrl(path?: string): string | null {
-    if (!path) return null;
-    if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('data:')) {
-        return path;
-    }
-    const normalized = path.replace(/\\/g, '/');
-    const fileName = normalized.split('/').pop();
-    if (!fileName) return null;
-    if (normalized.includes('/processed/') || normalized.includes('processed_')) {
-        return `${API_BASE}/processed/${encodeURIComponent(fileName)}`;
-    }
-    return `${API_BASE}/uploads/${encodeURIComponent(fileName)}`;
-}
-
 const SEVERITY_COLORS: Record<string, string> = {
     high: 'text-red-400 border-red-500/40 bg-red-500/10',
     medium: 'text-orange-400 border-orange-500/40 bg-orange-500/10',
@@ -150,11 +141,11 @@ export default function AdminPage() {
     const [hydrated, setHydrated] = useState(false);
     const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
     const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
+    const [selectedFrameIndex, setSelectedFrameIndex] = useState(0);
     const [emergencySendingFor, setEmergencySendingFor] = useState<string | null>(null);
     const [emergencySentFor, setEmergencySentFor] = useState<Set<string>>(new Set());
     const router = useRouter();
     const searchParams = useSearchParams();
-
     useEffect(() => {
         if (typeof window !== 'undefined') {
             setLocalAdmin(sessionStorage.getItem('localAdmin') === 'true');
@@ -198,12 +189,20 @@ export default function AdminPage() {
         setSelectedRequestId(null);
     }, [activeTab]);
 
+    useEffect(() => {
+        setSelectedFrameIndex(0);
+    }, [selectedRequestId]);
+
     const pendingRequests = useMemo(
         () => requests.filter((r) => r.status === 'pending'),
         [requests],
     );
     const acceptedRequests = useMemo(
         () => requests.filter((r) => r.status === 'approved'),
+        [requests],
+    );
+    const rejectedRequests = useMemo(
+        () => requests.filter((r) => r.status === 'rejected'),
         [requests],
     );
 
@@ -218,14 +217,22 @@ export default function AdminPage() {
                 acc.pedestrians += r.detection?.pedestrians ?? 0;
                 acc.violations += r.detection?.violations ?? 0;
                 acc.accidents += r.detection?.accidents ?? 0;
+                acc.risk += r.detection?.risk_score ?? 0;
                 return acc;
             },
-            { total: 0, pending: 0, approved: 0, rejected: 0, vehicles: 0, pedestrians: 0, violations: 0, accidents: 0 },
+            { total: 0, pending: 0, approved: 0, rejected: 0, vehicles: 0, pedestrians: 0, violations: 0, accidents: 0, risk: 0 },
         );
     }, [requests]);
 
+    const averageRisk = requests.length ? Math.round(summary.risk / requests.length) : 0;
+    const emergencyCandidates = useMemo(
+        () => requests.filter((r) => (r.detection?.accidents ?? 0) > 0 || (r.detection?.risk_score ?? 0) >= 75).slice(0, 4),
+        [requests],
+    );
+    const latestApprovedLocation = acceptedRequests[0]?.location || 'No approved hotspots yet';
+
     const visibleRequests =
-        activeTab === 'pending'
+        activeTab === 'dashboard' || activeTab === 'pending'
             ? pendingRequests
             : activeTab === 'accepted'
                 ? acceptedRequests
@@ -234,6 +241,15 @@ export default function AdminPage() {
         () => visibleRequests.find((r) => r.id === selectedRequestId) ?? null,
         [visibleRequests, selectedRequestId],
     );
+    const selectedFrames = useMemo(
+        () => (selectedRequest?.detection?.annotated_frames || [])
+            .map((frame) => toDisplayImageSrc(frame))
+            .filter((frame): frame is string => Boolean(frame)),
+        [selectedRequest],
+    );
+    const selectedPrimaryFrame = selectedFrames[selectedFrameIndex]
+        || toDisplayImageSrc(selectedRequest?.detection?.annotated_image)
+        || null;
 
     const updateStatus = async (id: string, status: UploadRecord['status']) => {
         try {
@@ -258,7 +274,7 @@ export default function AdminPage() {
             });
             if (res?.ok) {
                 setEmergencySentFor((prev) => new Set(Array.from(prev).concat(request.id)));
-                toast.success('Emergency WhatsApp sent to +916374411016!');
+                toast.success('Emergency WhatsApp sent to +917593014047!');
             } else {
                 toast.error(`WhatsApp failed: ${res?.whatsapp?.reason || 'Unknown error'}`);
             }
@@ -273,18 +289,19 @@ export default function AdminPage() {
     if (!hydrated || (authLoading && !localAdmin) || !allowed) {
         return (
             <div className="min-h-screen bg-dark-900 pt-16 flex items-center justify-center">
-                <div className="w-8 h-8 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+                <div className="w-8 h-8 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
             </div>
         );
     }
 
     return (
         <div className="min-h-screen bg-dark-900 pt-16">
-            <div className="bg-gradient-to-r from-cyan-900/35 via-blue-900/25 to-emerald-900/25 border-b border-cyan-500/20 px-6 py-6">
+            <div className="border-b border-red-500/15 bg-[linear-gradient(120deg,rgba(48,9,9,0.84),rgba(14,6,6,0.94),rgba(39,7,7,0.78))] px-6 py-6">
                 <div className="container-max flex items-center justify-between">
                     <div>
-                        <h1 className="text-2xl font-display font-bold text-white">Admin Control Center</h1>
-                        <p className="text-slate-300 text-sm mt-1">Dashboard insights, pending approvals, and full request history.</p>
+                        <p className="text-[11px] uppercase tracking-[0.34em] text-red-200/75">Command Surface</p>
+                        <h1 className="mt-2 text-3xl font-display font-bold text-white">Admin Dashboard</h1>
+                        <p className="text-slate-300 text-sm mt-2 max-w-2xl">Monitor the live queue, review evidence, approve incidents, and coordinate emergency escalation from a single operational dashboard.</p>
                     </div>
                     <button onClick={fetchRequests} className="btn-secondary py-2 px-3">
                         <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -292,75 +309,150 @@ export default function AdminPage() {
                 </div>
             </div>
 
-            {/* Tab Bar */}
-            <div className="border-b border-white/10 bg-dark-800/50">
-                <div className="container-max flex gap-1 py-2 px-4">
-                    {(['dashboard', 'pending', 'accepted', 'all'] as AdminTab[]).map((tab) => (
-                        <button
-                            key={tab}
-                            onClick={() => setActiveTab(tab)}
-                            className={`px-4 py-2 rounded-lg text-sm font-medium capitalize transition-all ${activeTab === tab ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
-                        >
-                            {tab}
-                            {tab === 'pending' && pendingRequests.length > 0 && (
-                                <span className="ml-2 px-1.5 py-0.5 text-xs bg-amber-500/30 text-amber-300 rounded-full">{pendingRequests.length}</span>
-                            )}
-                        </button>
+            <div className="container-max py-8 space-y-6">
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    {[
+                        { label: 'Open Queue', value: summary.pending, note: 'Needs review now', icon: Clock3, accent: 'text-amber-200', box: 'border-amber-500/20 bg-[linear-gradient(155deg,rgba(245,158,11,0.12),rgba(15,23,42,0.08))]' },
+                        { label: 'Accepted Reports', value: summary.approved, note: 'Ready for archive', icon: CheckCircle2, accent: 'text-emerald-200', box: 'border-emerald-500/20 bg-[linear-gradient(155deg,rgba(16,185,129,0.1),rgba(15,23,42,0.08))]' },
+                        { label: 'Total Incidents', value: summary.total, note: 'All tracked requests', icon: ListChecks, accent: 'text-rose-100', box: 'border-red-500/20 bg-[linear-gradient(155deg,rgba(239,68,68,0.12),rgba(30,6,12,0.08))]' },
+                        { label: 'Average Risk', value: `${averageRisk}%`, note: 'AI severity average', icon: Gauge, accent: 'text-cyan-200', box: 'border-cyan-500/20 bg-[linear-gradient(155deg,rgba(34,211,238,0.1),rgba(15,23,42,0.08))]' },
+                    ].map(({ label, value, note, icon: Icon, accent, box }) => (
+                        <div key={label} className={`rounded-[1.6rem] border p-5 shadow-[0_22px_60px_rgba(0,0,0,0.22)] ${box}`}>
+                            <div className="flex items-center justify-between">
+                                <p className="text-[11px] uppercase tracking-[0.24em] text-slate-400">{label}</p>
+                                <Icon className={`h-4 w-4 ${accent}`} />
+                            </div>
+                            <p className={`mt-4 text-3xl font-display font-bold ${accent}`}>{value}</p>
+                            <p className="mt-1 text-xs text-slate-400">{note}</p>
+                        </div>
                     ))}
                 </div>
-            </div>
 
-            <div className="container-max py-8 space-y-6">
                 {activeTab === 'dashboard' && (
-                    <>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                            <div className="glass-card p-4 border border-cyan-500/30 bg-cyan-500/10">
-                                <p className="text-cyan-300 text-xs">Vehicles</p>
-                                <p className="text-2xl text-white font-bold">{summary.vehicles}</p>
-                            </div>
-                            <div className="glass-card p-4 border border-blue-500/30 bg-blue-500/10">
-                                <p className="text-blue-300 text-xs">Pedestrians</p>
-                                <p className="text-2xl text-white font-bold">{summary.pedestrians}</p>
-                            </div>
-                            <div className="glass-card p-4 border border-amber-500/30 bg-amber-500/10">
-                                <p className="text-amber-300 text-xs">Violations</p>
-                                <p className="text-2xl text-white font-bold">{summary.violations}</p>
-                            </div>
-                            <div className="glass-card p-4 border border-rose-500/30 bg-rose-500/10">
-                                <p className="text-rose-300 text-xs">Accidents</p>
-                                <p className="text-2xl text-white font-bold">{summary.accidents}</p>
-                            </div>
+                    <div className="space-y-6">
+                        <div className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
+                            <motion.section
+                                initial={{ opacity: 0, y: 12 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                className="glass-card overflow-hidden border border-red-500/20 shadow-[0_28px_80px_rgba(0,0,0,0.28)]"
+                            >
+                                <div className="relative p-6">
+                                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.18),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(239,68,68,0.18),transparent_34%),linear-gradient(140deg,rgba(7,12,24,0.44),rgba(27,7,16,0.18))]" />
+                                    <div className="relative z-10">
+                                        <div className="flex items-start justify-between gap-4">
+                                            <div>
+                                                <p className="text-xs uppercase tracking-[0.34em] text-cyan-200/75">Live Command Layer</p>
+                                                <h2 className="mt-3 text-3xl font-display font-bold text-white">Citywide Traffic Oversight</h2>
+                                                <p className="mt-3 max-w-xl text-sm leading-6 text-slate-300">
+                                                    Monitor approvals, scan high-risk incidents, and keep emergency-ready reports in one operational surface.
+                                                </p>
+                                            </div>
+                                            <div className="rounded-2xl border border-cyan-400/20 bg-cyan-500/10 px-4 py-3 text-right">
+                                                <p className="text-[11px] uppercase tracking-[0.28em] text-cyan-200/70">Hotspot</p>
+                                                <p className="mt-2 max-w-[12rem] text-sm font-semibold text-cyan-100">{latestApprovedLocation}</p>
+                                            </div>
+                                        </div>
+
+                                        <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                                            {[
+                                                { label: 'Open Queue', value: summary.pending, note: 'Awaiting review', icon: Clock3, tone: 'text-amber-200', box: 'border-amber-500/20 bg-amber-500/10' },
+                                                { label: 'Average Risk', value: `${averageRisk}%`, note: 'Across all reports', icon: Gauge, tone: 'text-rose-100', box: 'border-red-500/20 bg-red-500/10' },
+                                                { label: 'Accident Flags', value: summary.accidents, note: 'Emergency candidates', icon: Siren, tone: 'text-red-200', box: 'border-rose-500/20 bg-rose-500/10' },
+                                                { label: 'Accepted Today', value: summary.approved, note: `${rejectedRequests.length} rejected`, icon: CheckCircle2, tone: 'text-emerald-200', box: 'border-emerald-500/20 bg-emerald-500/10' },
+                                            ].map(({ label, value, note, icon: Icon, tone, box }) => (
+                                                <div key={label} className={`rounded-2xl border p-4 ${box}`}>
+                                                    <div className="flex items-center justify-between">
+                                                        <p className="text-xs uppercase tracking-[0.26em] text-slate-400">{label}</p>
+                                                        <Icon className={`h-4 w-4 ${tone}`} />
+                                                    </div>
+                                                    <p className={`mt-4 text-3xl font-display font-bold ${tone}`}>{value}</p>
+                                                    <p className="mt-1 text-xs text-slate-400">{note}</p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            </motion.section>
+
+                            <motion.section
+                                initial={{ opacity: 0, y: 12 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: 0.05 }}
+                                className="glass-card border border-red-500/20 p-6"
+                            >
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <p className="text-xs uppercase tracking-[0.32em] text-red-200/75">Priority Feed</p>
+                                        <h3 className="mt-2 text-xl font-display font-semibold text-white">Immediate Attention</h3>
+                                    </div>
+                                    <Orbit className="h-5 w-5 text-red-200" />
+                                </div>
+                                <div className="mt-6 space-y-3">
+                                    {emergencyCandidates.length === 0 ? (
+                                        <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-sm text-emerald-100">
+                                            No high-risk incidents are currently waiting in the queue.
+                                        </div>
+                                    ) : (
+                                        emergencyCandidates.map((req) => (
+                                            <button
+                                                key={req.id}
+                                                onClick={() => {
+                                                    setActiveTab(req.status === 'approved' ? 'accepted' : req.status === 'pending' ? 'pending' : 'all');
+                                                    setSelectedRequestId(req.id);
+                                                }}
+                                                className="w-full rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-left transition-all hover:border-red-500/30 hover:bg-red-500/10"
+                                            >
+                                                <div className="flex items-center justify-between gap-3">
+                                                    <div>
+                                                        <p className="text-xs font-mono text-red-200">#{req.id.slice(0, 8).toUpperCase()}</p>
+                                                        <p className="mt-1 text-sm font-semibold text-white">{req.location || 'Unknown location'}</p>
+                                                    </div>
+                                                    <span className="rounded-full bg-red-500/15 px-2.5 py-1 text-[11px] text-red-100">
+                                                        Risk {req.detection?.risk_score ?? 0}
+                                                    </span>
+                                                </div>
+                                                <p className="mt-2 text-xs text-slate-400">
+                                                    {(req.media_type || 'image').toUpperCase()} · {(req.detection?.accidents ?? 0)} accidents · {(req.detection?.violations ?? 0)} violations
+                                                </p>
+                                            </button>
+                                        ))
+                                    )}
+                                </div>
+                            </motion.section>
                         </div>
 
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                            <div className="glass-card p-4 border border-amber-500/30 bg-amber-500/10">
-                                <p className="text-amber-300 text-xs">Pending</p>
-                                <p className="text-2xl text-white font-bold">{summary.pending}</p>
-                            </div>
-                            <div className="glass-card p-4 border border-emerald-500/30 bg-emerald-500/10">
-                                <p className="text-emerald-300 text-xs">Accepted</p>
-                                <p className="text-2xl text-white font-bold">{summary.approved}</p>
-                            </div>
-                            <div className="glass-card p-4 border border-rose-500/30 bg-rose-500/10">
-                                <p className="text-rose-300 text-xs">Rejected</p>
-                                <p className="text-2xl text-white font-bold">{summary.rejected}</p>
-                            </div>
-                            <div className="glass-card p-4 border border-cyan-500/30 bg-cyan-500/10">
-                                <p className="text-cyan-300 text-xs">Total Requests</p>
-                                <p className="text-2xl text-white font-bold">{summary.total}</p>
-                            </div>
+                        <div className="grid gap-4 md:grid-cols-4">
+                            {[
+                                { label: 'Vehicles Tracked', value: summary.vehicles, accent: 'text-sky-200', icon: Activity },
+                                { label: 'Pedestrians Seen', value: summary.pedestrians, accent: 'text-indigo-200', icon: Eye },
+                                { label: 'Violations Logged', value: summary.violations, accent: 'text-orange-200', icon: Scale },
+                                { label: 'Total Requests', value: summary.total, accent: 'text-red-100', icon: ListChecks },
+                            ].map(({ label, value, accent, icon: Icon }) => (
+                                <div key={label} className="glass-card border border-white/10 p-5">
+                                    <div className="flex items-center justify-between">
+                                        <p className="text-xs uppercase tracking-[0.24em] text-slate-400">{label}</p>
+                                        <Icon className={`h-4 w-4 ${accent}`} />
+                                    </div>
+                                    <p className={`mt-4 text-2xl font-display font-bold ${accent}`}>{value}</p>
+                                </div>
+                            ))}
                         </div>
 
                         <AdminTrafficCharts />
-                    </>
+                    </div>
                 )}
 
-                {(activeTab === 'pending' || activeTab === 'accepted' || activeTab === 'all') && (
-                    <div className={`grid gap-5 ${selectedRequest ? 'lg:grid-cols-[360px_1fr]' : 'lg:grid-cols-1'}`}>
+                <div className={`grid gap-5 ${selectedRequest ? 'lg:grid-cols-[360px_1fr]' : 'lg:grid-cols-1'}`}>
                         {/* Left list */}
                         <div className="glass-card border border-white/10 rounded-2xl p-4">
                             <h2 className="text-xl font-display font-semibold text-white mb-3">
-                                {activeTab === 'pending' ? 'Pending Requests' : activeTab === 'accepted' ? 'Accepted Requests' : 'All Requests'}
+                                {activeTab === 'dashboard'
+                                    ? 'Live Review Queue'
+                                    : activeTab === 'pending'
+                                        ? 'Pending Requests'
+                                        : activeTab === 'accepted'
+                                            ? 'Accepted Requests'
+                                            : 'All Requests'}
                             </h2>
                             {visibleRequests.length === 0 ? (
                                 <p className="text-slate-400 text-sm">No requests found.</p>
@@ -374,11 +466,11 @@ export default function AdminPage() {
                                                 key={req.id}
                                                 onClick={() => setSelectedRequestId(req.id)}
                                                 className={`w-full text-left rounded-xl border p-3 transition-all ${active
-                                                    ? 'border-cyan-400/50 bg-cyan-500/10'
-                                                    : 'border-white/10 bg-white/5 hover:bg-white/10'}`}
+                                                    ? 'border-red-400/40 bg-red-500/10 shadow-[0_0_24px_rgba(239,68,68,0.16)]'
+                                                    : 'border-white/10 bg-white/5 hover:border-red-500/20 hover:bg-white/10'}`}
                                             >
                                                 <div className="flex items-center justify-between gap-2">
-                                                    <p className="text-sm font-mono text-cyan-200">#{req.id.slice(0, 8).toUpperCase()}</p>
+                                                    <p className="text-sm font-mono text-red-100">#{req.id.slice(0, 8).toUpperCase()}</p>
                                                     <div className="flex items-center gap-2">
                                                         {hasAccident && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-red-500/20 text-red-300">ACCIDENT</span>}
                                                         <span className={`text-[10px] px-2 py-0.5 rounded-full ${req.status === 'approved'
@@ -410,7 +502,7 @@ export default function AdminPage() {
                                 {/* Header */}
                                 <div className="flex items-center justify-between gap-2">
                                     <h3 className="text-xl text-white font-display font-semibold flex items-center gap-2">
-                                        <Eye className="w-5 h-5 text-cyan-300" />
+                                        <Eye className="w-5 h-5 text-red-200" />
                                         Request Details
                                     </h3>
                                     <p className="text-xs text-slate-400">{toDateLabel(selectedRequest.created_at)}</p>
@@ -418,9 +510,9 @@ export default function AdminPage() {
 
                                 {/* Location */}
                                 {selectedRequest.location && (
-                                    <div className="flex items-center gap-3 px-3 py-2 rounded-xl bg-cyan-500/5 border border-cyan-500/20">
-                                        <MapPin className="w-4 h-4 text-cyan-400 shrink-0" />
-                                        <span className="text-sm text-cyan-200 font-medium">{selectedRequest.location}</span>
+                                    <div className="flex items-center gap-3 px-3 py-2 rounded-xl bg-red-500/5 border border-red-500/20">
+                                        <MapPin className="w-4 h-4 text-red-300 shrink-0" />
+                                        <span className="text-sm text-red-100 font-medium">{selectedRequest.location}</span>
                                     </div>
                                 )}
 
@@ -452,47 +544,43 @@ export default function AdminPage() {
                                     <p className="text-xs text-slate-400">Source File</p>
                                     {selectedRequest.media_type === 'video' ? (
                                         (() => {
-                                            const src = toMediaUrl(selectedRequest.video_path);
+                                            const src = toAbsoluteMediaUrl(selectedRequest.video_path);
                                             if (!src) return <p className="text-slate-400 text-xs">No source video found.</p>;
                                             return <video controls className="w-full rounded-lg border border-white/10 bg-black/40" src={src} />;
                                         })()
                                     ) : (
                                         (() => {
-                                            const src = toMediaUrl(selectedRequest.video_path);
+                                            const src = toAbsoluteMediaUrl(selectedRequest.video_path);
                                             if (!src) return <p className="text-slate-400 text-xs">No source image found.</p>;
                                             return <img src={src} alt="Source" className="w-full rounded-lg border border-white/10" />;
                                         })()
                                     )}
                                 </div>
 
-                                {/* Processed / annotated output — LIVE ANNOTATED VIDEO */}
+                                {/* Annotated evidence */}
                                 <div className="rounded-xl bg-white/5 border border-white/10 p-3 space-y-2">
                                     <div className="flex items-center gap-2">
-                                        <p className="text-xs text-slate-400">Annotated Detection Output</p>
-                                        <span className="text-[10px] px-1.5 py-0.5 bg-cyan-500/20 text-cyan-300 rounded-full border border-cyan-500/20">LIVE BOXES</span>
+                                        <p className="text-xs text-slate-400">Annotated Detection Frames</p>
+                                        <span className="text-[10px] px-1.5 py-0.5 bg-red-500/15 text-red-100 rounded-full border border-red-500/20">BOXED EVIDENCE</span>
                                     </div>
-                                    {selectedRequest.media_type === 'video' ? (
-                                        (() => {
-                                            const src = toMediaUrl(selectedRequest.processed_video);
-                                            if (!src) return <p className="text-slate-400 text-xs">No processed video found.</p>;
-                                            return (
-                                                <video
-                                                    controls
-                                                    autoPlay
-                                                    loop
-                                                    muted
-                                                    playsInline
-                                                    className="w-full rounded-lg border border-white/10 bg-black/40"
-                                                    src={src}
-                                                />
-                                            );
-                                        })()
+                                    {selectedPrimaryFrame ? (
+                                        <img src={selectedPrimaryFrame} alt="Annotated evidence frame" className="w-full rounded-lg border border-white/10 bg-black/40" />
                                     ) : (
-                                        (() => {
-                                            const src = toMediaUrl(selectedRequest.processed_video);
-                                            if (!src) return <p className="text-slate-400 text-xs">No processed image found.</p>;
-                                            return <img src={src} alt="Detection Output" className="w-full rounded-lg border border-white/10" />;
-                                        })()
+                                        <p className="text-slate-400 text-xs">No annotated evidence frames found.</p>
+                                    )}
+                                    {selectedFrames.length > 1 && (
+                                        <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+                                            {selectedFrames.map((frame, index) => (
+                                                <button
+                                                    key={`admin-frame-${index}`}
+                                                    onClick={() => setSelectedFrameIndex(index)}
+                                                    className={`overflow-hidden rounded-lg border transition-all ${index === selectedFrameIndex ? 'border-cyan-400/60 ring-1 ring-cyan-400/40' : 'border-white/10 hover:border-red-400/30'}`}
+                                                >
+                                                    <img src={frame} alt={`Frame ${index + 1}`} className="h-24 w-full object-cover bg-black/40" />
+                                                    <div className="border-t border-white/10 bg-black/30 px-2 py-1 text-[10px] text-slate-300">Frame {index + 1}</div>
+                                                </button>
+                                            ))}
+                                        </div>
                                     )}
                                     <div className="flex flex-wrap gap-2 text-xs mt-1">
                                         {[
@@ -587,9 +675,9 @@ export default function AdminPage() {
                                                 )}
                                             </div>
 
-                                            <div className="rounded-xl bg-cyan-500/5 border border-cyan-500/20 p-3">
+                                            <div className="rounded-xl bg-red-500/5 border border-red-500/20 p-3">
                                                 <div className="flex items-center gap-2 mb-3">
-                                                    <Eye className="w-4 h-4 text-cyan-400" />
+                                                    <Eye className="w-4 h-4 text-red-300" />
                                                     <p className="text-sm font-semibold text-white">Model Output Events</p>
                                                 </div>
                                                 {(selectedRequest.detection.events || []).filter((event) => String(event.type || '').toLowerCase() !== 'accident').length > 0 ? (
@@ -599,9 +687,9 @@ export default function AdminPage() {
                                                             .map((event, idx) => (
                                                                 <div key={`event-${idx}`} className="rounded-lg bg-white/5 border border-white/10 p-3">
                                                                     <div className="flex items-center justify-between gap-3">
-                                                                        <p className="text-sm font-medium text-cyan-200">{formatEventLabel(event.type)}</p>
+                                                                        <p className="text-sm font-medium text-red-100">{formatEventLabel(event.type)}</p>
                                                                         {'count' in event && typeof event.count === 'number' ? (
-                                                                            <span className="text-xs text-cyan-300 font-semibold">x{event.count}</span>
+                                                                            <span className="text-xs text-red-200 font-semibold">x{event.count}</span>
                                                                         ) : null}
                                                                     </div>
                                                                     <p className="text-xs text-slate-300 mt-1">{formatEventSummary(event)}</p>
@@ -692,7 +780,6 @@ export default function AdminPage() {
                             </motion.div>
                         )}
                     </div>
-                )}
             </div>
         </div>
     );

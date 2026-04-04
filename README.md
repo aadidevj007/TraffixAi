@@ -76,6 +76,12 @@ venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
+If you hit a NumPy compatibility error from `torch` or `ultralytics`, keep NumPy on the 1.x line:
+```bash
+pip install "numpy<2" --force-reinstall
+pip install -r requirements.txt --upgrade
+```
+
 Create `backend/.env`:
 ```env
 PORT=8000

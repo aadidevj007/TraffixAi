@@ -81,6 +81,7 @@ const config: Config = {
       },
       boxShadow: {
         'glow-cyan': '0 0 20px rgba(6, 182, 212, 0.5)',
+        'glow-red': '0 0 28px rgba(239, 68, 68, 0.38)',
         'glow-purple': '0 0 20px rgba(139, 92, 246, 0.5)',
         'glass': '0 8px 32px rgba(0, 0, 0, 0.37)',
         'card': '0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',

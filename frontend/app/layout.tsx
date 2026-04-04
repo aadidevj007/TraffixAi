@@ -5,6 +5,7 @@ import { AuthProvider } from '@/contexts/AuthContext'
 import { Toaster } from 'react-hot-toast'
 import Navbar from '@/components/layout/Navbar'
 import AppBackgroundVideo from '@/components/layout/AppBackgroundVideo'
+import PageTransition from '@/components/layout/PageTransition'
 
 const lora = Lora({ subsets: ['latin'], variable: '--font-lora' })
 
@@ -37,20 +38,22 @@ export default function RootLayout({
         <AuthProvider>
           <AppBackgroundVideo />
           <Navbar />
-          <main className="relative z-10">{children}</main>
+          <main className="relative z-10">
+            <PageTransition>{children}</PageTransition>
+          </main>
           <Toaster
             position="top-right"
             toastOptions={{
               style: {
-                background: '#1e293b',
-                color: '#f1f5f9',
-                border: '1px solid rgba(6,182,212,0.3)',
+                background: '#140707',
+                color: '#fff1f2',
+                border: '1px solid rgba(239,68,68,0.32)',
               },
               success: {
-                iconTheme: { primary: '#10b981', secondary: '#fff' },
+                iconTheme: { primary: '#ef4444', secondary: '#fff' },
               },
               error: {
-                iconTheme: { primary: '#ef4444', secondary: '#fff' },
+                iconTheme: { primary: '#fb7185', secondary: '#fff' },
               },
             }}
           />

@@ -6,15 +6,13 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/contexts/AuthContext';
 import {
-    Home, LayoutDashboard, Upload, FileText, CheckCircle2, Clock3, ListChecks,
+    LayoutDashboard, Upload, FileText, CheckCircle2, Clock3, ListChecks,
     LogIn, LogOut, Menu, X, ChevronDown, User, Sparkles
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import BrandLogo from '@/components/layout/BrandLogo';
 
-const guestNavLinks = [
-    { href: '/', label: 'Home', icon: Home },
-];
+const guestNavLinks: Array<{ href: string; label: string; icon: typeof LayoutDashboard }> = [];
 
 const userNavLinks = [
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -24,7 +22,7 @@ const userNavLinks = [
 ];
 
 const adminNavLinks = [
-    { href: '/admin?tab=dashboard', label: 'Admin Dashboard', icon: LayoutDashboard },
+    { href: '/admin?tab=dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { href: '/admin?tab=pending', label: 'Pending Requests', icon: Clock3 },
     { href: '/admin?tab=accepted', label: 'Accepted Requests', icon: CheckCircle2 },
     { href: '/admin?tab=all', label: 'All Requests', icon: ListChecks },
@@ -90,7 +88,7 @@ export default function Navbar() {
             animate={{ y: 0, opacity: 1 }}
             transition={{ duration: 0.5 }}
             className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${scrolled
-                ? 'bg-dark-900/95 backdrop-blur-xl border-b border-white/10 shadow-lg'
+                ? 'bg-[#070202]/90 backdrop-blur-2xl border-b border-red-500/15 shadow-[0_18px_60px_rgba(0,0,0,0.5)]'
                 : 'bg-transparent'
                 }`}
         >
@@ -106,7 +104,7 @@ export default function Navbar() {
                                 key={href}
                                 href={href}
                                 className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${isActiveLink(href)
-                                    ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
+                                    ? 'bg-red-500/15 text-red-200 border border-red-500/30 shadow-[0_0_28px_rgba(239,68,68,0.15)]'
                                     : 'text-slate-300 hover:text-white hover:bg-white/10'
                                     }`}
                             >
@@ -122,9 +120,9 @@ export default function Navbar() {
                             <div className="relative">
                                 <button
                                     onClick={() => setUserMenuOpen(!userMenuOpen)}
-                                    className="flex items-center gap-2 glass-card px-3 py-1.5 hover:border-cyan-500/30 transition-all"
+                                    className="flex items-center gap-2 glass-card px-3 py-1.5 hover:border-red-500/30 transition-all"
                                 >
-                                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center text-xs font-bold">
+                                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-red-500 to-rose-700 flex items-center justify-center text-xs font-bold">
                                         {(profile?.name?.[0] || user?.email?.[0] || 'A').toUpperCase()}
                                     </div>
                                     <div className="text-left">
@@ -140,7 +138,7 @@ export default function Navbar() {
                                             initial={{ opacity: 0, y: 10 }}
                                             animate={{ opacity: 1, y: 0 }}
                                             exit={{ opacity: 0, y: 10 }}
-                                            className="absolute right-0 top-full mt-2 w-48 glass-card border border-white/10 rounded-xl overflow-hidden"
+                                            className="absolute right-0 top-full mt-2 w-48 glass-card border border-red-500/15 rounded-xl overflow-hidden"
                                         >
                                             <Link href="/profile" className="flex items-center gap-2 px-4 py-3 text-sm text-slate-300 hover:bg-white/10 hover:text-white transition-colors">
                                                 <User className="w-4 h-4" />
@@ -166,8 +164,8 @@ export default function Navbar() {
                     </div>
 
                     {/* Mobile toggle */}
-                    <button
-                        onClick={() => setIsOpen(!isOpen)}
+                        <button
+                            onClick={() => setIsOpen(!isOpen)}
                         className="md:hidden p-2 rounded-lg hover:bg-white/10 transition-colors"
                     >
                         {isOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
@@ -182,7 +180,7 @@ export default function Navbar() {
                         initial={{ opacity: 0, height: 0 }}
                         animate={{ opacity: 1, height: 'auto' }}
                         exit={{ opacity: 0, height: 0 }}
-                        className="md:hidden bg-dark-800/95 backdrop-blur-xl border-b border-white/10"
+                        className="md:hidden bg-[#090303]/95 backdrop-blur-xl border-b border-red-500/15"
                     >
                         <div className="container-max py-4 space-y-1">
                             {visibleLinks.map(({ href, label, icon: Icon }) => (
@@ -191,7 +189,7 @@ export default function Navbar() {
                                     href={href}
                                     onClick={() => setIsOpen(false)}
                                     className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${isActiveLink(href)
-                                        ? 'bg-cyan-500/20 text-cyan-400'
+                                        ? 'bg-red-500/15 text-red-200'
                                         : 'text-slate-300 hover:bg-white/10 hover:text-white'
                                         }`}
                                 >
@@ -211,7 +209,7 @@ export default function Navbar() {
                                 <Link
                                     href="/login"
                                     onClick={() => setIsOpen(false)}
-                                    className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm text-cyan-400 hover:bg-cyan-500/10 transition-all"
+                                    className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm text-red-200 hover:bg-red-500/10 transition-all"
                                 >
                                     <LogIn className="w-4 h-4" />
                                     Login

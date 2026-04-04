@@ -8,7 +8,7 @@ import {
     Upload, Image as ImageIcon, Video,
     CheckCircle, X, AlertCircle, Loader, Camera, AlertTriangle, ShieldX,
     Car, UserX, Gauge, Eye, Crosshair, Send, ChevronLeft, ChevronRight,
-    Shield
+    Shield, Sparkles, MapPin
 } from 'lucide-react';
 import api, { uploadImage, uploadVideo } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
@@ -87,6 +87,14 @@ function compactUploadResult(raw: Record<string, any>, mediaType: Tab): Record<s
 
     if (mediaType === 'image' && typeof raw?.annotated_image === 'string') {
         base.annotated_image = raw.annotated_image;
+    }
+    if (mediaType === 'video') {
+        if (typeof raw?.annotated_image === 'string') {
+            base.annotated_image = raw.annotated_image;
+        }
+        if (Array.isArray(raw?.annotated_frames)) {
+            base.annotated_frames = raw.annotated_frames;
+        }
     }
     return base;
 }
@@ -393,10 +401,30 @@ export default function UploadPage() {
 
     return (
         <div className="min-h-screen bg-dark-900 pt-16">
-            <div className="bg-dark-800/50 border-b border-white/10 px-6 py-6">
-                <div className="container-max">
-                    <h1 className="text-2xl font-display font-bold text-white">Evidence Upload</h1>
-                    <p className="text-slate-400 text-sm mt-1">Upload CCTV footage or images for AI-powered analysis</p>
+            <div className="border-b border-red-500/15 bg-[linear-gradient(120deg,rgba(42,7,7,0.9),rgba(9,5,5,0.96),rgba(18,8,8,0.86))] px-6 py-8">
+                <div className="container-max grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+                    <div>
+                        <div className="inline-flex items-center gap-2 rounded-full border border-red-500/20 bg-red-500/10 px-3 py-1 text-xs uppercase tracking-[0.32em] text-red-100/80">
+                            <Sparkles className="h-3.5 w-3.5" />
+                            Evidence Intake Layer
+                        </div>
+                        <h1 className="mt-4 text-4xl font-display font-bold text-white">Evidence Upload</h1>
+                        <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
+                            Submit images or CCTV video for AI-based detection, risk scoring, annotated output, and verdict generation through a cleaner intake workflow.
+                        </p>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3">
+                        {[
+                            { label: 'Media Modes', value: '2' },
+                            { label: 'AI Output', value: 'Live' },
+                            { label: 'Verdict Flow', value: 'Ready' },
+                        ].map((item) => (
+                            <div key={item.label} className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                                <p className="text-[11px] uppercase tracking-[0.24em] text-slate-400">{item.label}</p>
+                                <p className="mt-3 text-2xl font-display font-bold text-red-100">{item.value}</p>
+                            </div>
+                        ))}
+                    </div>
                 </div>
             </div>
 
@@ -487,13 +515,55 @@ function UnifiedUploadSection({ user }: { user: any }) {
 
     return (
         <div className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                <div className="glass-card p-6 space-y-5">
-                    <h3 className="font-semibold text-white flex items-center gap-2">
-                        <ImageIcon className="w-4 h-4 text-cyan-400" /> Image Upload
-                    </h3>
+            <div className="grid gap-6 xl:grid-cols-[0.86fr_1.14fr]">
+                <div className="space-y-6">
+                    <div className="glass-card border border-red-500/15 p-6">
+                        <div className="flex items-start gap-3">
+                            <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-3">
+                                <MapPin className="h-5 w-5 text-red-200" />
+                            </div>
+                            <div className="flex-1">
+                                <p className="text-xs uppercase tracking-[0.3em] text-red-200/75">Scene Context</p>
+                                <h3 className="mt-2 text-xl font-display font-semibold text-white">Where did this happen?</h3>
+                                <p className="mt-2 text-sm text-slate-400">Location improves route intelligence, admin review, and final verdict context.</p>
+                            </div>
+                        </div>
+                        <div className="mt-5">
+                            <LocationAutocompleteInput
+                                value={location}
+                                onChange={setLocation}
+                                placeholder="Enter location"
+                            />
+                        </div>
+                    </div>
+
+                    <div className="glass-card border border-white/10 p-6">
+                        <p className="text-xs uppercase tracking-[0.28em] text-blue-200/75">Workflow</p>
+                        <div className="mt-4 space-y-3">
+                            {[
+                                'Upload image or CCTV video evidence.',
+                                'AI detects vehicles, pedestrians, incidents, and violations.',
+                                'Annotated output and verdict are generated automatically.',
+                            ].map((step, index) => (
+                                <div key={step} className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                                    <span className="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full bg-red-500/15 text-sm font-semibold text-red-100">{index + 1}</span>
+                                    <p className="text-sm text-slate-300">{step}</p>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="glass-card p-6 space-y-5 border border-red-500/15">
+                    <div className="flex items-center justify-between">
+                        <h3 className="font-semibold text-white flex items-center gap-2">
+                            <ImageIcon className="w-4 h-4 text-red-200" /> Image Upload
+                        </h3>
+                        <span className="rounded-full bg-red-500/10 px-2.5 py-1 text-[11px] text-red-100">Fast Scan</span>
+                    </div>
                     <div
-                        className="relative border-2 border-dashed border-cyan-500/30 rounded-2xl p-8 text-center hover:border-cyan-400/60 transition-colors cursor-pointer"
+                        className="relative border-2 border-dashed border-red-500/25 rounded-3xl p-8 text-center hover:border-red-400/55 hover:bg-red-500/5 transition-colors cursor-pointer"
                         onClick={() => document.getElementById('image-input-unified')?.click()}
                     >
                         <input
@@ -510,7 +580,7 @@ function UnifiedUploadSection({ user }: { user: any }) {
                             className="hidden"
                         />
                         {imagePreview ? (
-                            <img src={imagePreview} alt="Image preview" className="max-h-56 mx-auto rounded-xl object-contain" />
+                            <img src={imagePreview} alt="Image preview" className="max-h-56 mx-auto rounded-2xl object-contain" />
                         ) : (
                             <>
                                 <Camera className="w-10 h-10 text-slate-500 mx-auto mb-3" />
@@ -528,12 +598,15 @@ function UnifiedUploadSection({ user }: { user: any }) {
                     </button>
                 </div>
 
-                <div className="glass-card p-6 space-y-5">
-                    <h3 className="font-semibold text-white flex items-center gap-2">
-                        <Video className="w-4 h-4 text-purple-400" /> Video Upload
-                    </h3>
+                <div className="glass-card p-6 space-y-5 border border-blue-500/15">
+                    <div className="flex items-center justify-between">
+                        <h3 className="font-semibold text-white flex items-center gap-2">
+                            <Video className="w-4 h-4 text-blue-200" /> Video Upload
+                        </h3>
+                        <span className="rounded-full bg-blue-500/10 px-2.5 py-1 text-[11px] text-blue-100">Deep Analysis</span>
+                    </div>
                     <div
-                        className="relative border-2 border-dashed border-purple-500/30 rounded-2xl p-8 text-center hover:border-purple-400/60 transition-colors cursor-pointer"
+                        className="relative border-2 border-dashed border-blue-500/25 rounded-3xl p-8 text-center hover:border-blue-400/55 hover:bg-blue-500/5 transition-colors cursor-pointer"
                         onClick={() => document.getElementById('video-input-unified')?.click()}
                     >
                         <input
@@ -565,26 +638,19 @@ function UnifiedUploadSection({ user }: { user: any }) {
                                 <span>Uploading &amp; Analyzing...</span><span>{progress}%</span>
                             </div>
                             <div className="progress-bar">
-                                <div className="progress-fill bg-gradient-to-r from-purple-500 to-pink-500 transition-all duration-300" style={{ width: `${progress}%` }} />
+                                <div className="progress-fill bg-gradient-to-r from-blue-500 to-cyan-400 transition-all duration-300" style={{ width: `${progress}%` }} />
                             </div>
                         </div>
                     )}
                     <button
                         onClick={analyzeVideo}
                         disabled={loadingMedia !== null || !videoFile}
-                        className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-purple-500 to-pink-600 text-white font-semibold px-6 py-3 rounded-xl hover:from-purple-400 hover:to-pink-500 transition-all disabled:opacity-50"
+                        className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-semibold px-6 py-3 rounded-xl hover:from-blue-400 hover:to-cyan-400 transition-all disabled:opacity-50"
                     >
                         {loadingMedia === 'video' ? <><Loader className="w-4 h-4 animate-spin" /> Processing...</> : <><Video className="w-4 h-4" />Analyze Video To AI</>}
                     </button>
                 </div>
-            </div>
-
-            <div className="glass-card p-6">
-                <LocationAutocompleteInput
-                    value={location}
-                    onChange={setLocation}
-                    placeholder="Location"
-                />
+                </div>
             </div>
 
         </div>
