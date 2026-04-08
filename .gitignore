@@ -5,6 +5,10 @@ node_modules/
 # Python
 **/__pycache__/
 **/*.pyc
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.venv/
 **/venv/
 
 # Build artifacts
@@ -28,6 +32,8 @@ backend/uploads/
 backend/processed/
 traffic/backend/uploads/
 traffic/backend/processed/
+tmp_frames/
+_tmp_diff.txt
 
 # Local env / secrets
 .env
