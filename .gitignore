@@ -39,6 +39,8 @@ _tmp_diff.txt
 .env
 .env.*
 **/.env.local
+backend/.env
+frontend/.env.local
 firebase/serviceAccountKey.json
 
 # Editors/OS
@@ -54,3 +56,13 @@ frontend/.git_backup/
 *.pt
 *.onnx
 *.h5
+!backend/models/
+!backend/models/yolov8n.pt
+!backend/models/accident_model.pt
+
+# Duplicate local model copies
+ai_models/yolov8n.pt
+traffic_models/yolov8n.pt
+traffic_models/YOLO-Weights/
+backend/yolov8n.pt
+backend/backend/models/
