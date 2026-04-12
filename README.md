@@ -426,7 +426,6 @@ It is the kind of project that reads well both as a portfolio showcase and as a 
 
 ## Suggested Next Upgrades
 
-- move media storage to a durable cloud bucket
 - add background job handling for longer video processing
 - expand automated tests for upload and report flows
 - harden very large PDF export cases
@@ -434,6 +433,3 @@ It is the kind of project that reads well both as a portfolio showcase and as a 
 
 ---
 
-## License
-
-No license is currently specified in this repository. Add one if you want to define reuse terms clearly.
