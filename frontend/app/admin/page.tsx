@@ -25,7 +25,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import toast from 'react-hot-toast';
 import AdminTrafficCharts from '@/components/charts/AdminTrafficCharts';
 import { getAdminRequests, updateAdminRequestStatus, sendAdminEmergency } from '@/lib/api';
-import { toAbsoluteMediaUrl, toDisplayImageSrc } from '@/lib/media';
+import { toAbsoluteMediaUrl, toDisplayImageSrc, toProcessedPlayableUrl } from '@/lib/media';
 
 type ViolationJudge = {
     label?: string;
@@ -62,6 +62,8 @@ type UploadRecord = {
     status: 'pending' | 'approved' | 'rejected';
     video_path?: string;
     processed_video?: string;
+    processed_media_url?: string;
+    processed_playable_url?: string;
     detection?: {
         vehicles?: number;
         pedestrians?: number;
@@ -119,12 +121,49 @@ function formatEventSummary(event: Record<string, unknown>): string {
     return summaryParts.join(' | ');
 }
 
+function groupEventsBySummary(events: Array<Record<string, unknown>>) {
+    return events.reduce<Array<{ label: string; summary: string; count: number; event: Record<string, unknown> }>>((groups, event) => {
+        const label = formatEventLabel(event.type);
+        const summary = formatEventSummary(event) || 'Detected in analyzed evidence';
+        const existing = groups.find((group) => group.label === label && group.summary === summary);
+        if (existing) {
+            existing.count += 1;
+            return groups;
+        }
+        groups.push({ label, summary, count: 1, event });
+        return groups;
+    }, []);
+}
+
 function toDateLabel(createdAt: string | undefined): string {
     if (!createdAt) return 'N/A';
     const parsed = new Date(createdAt);
     if (!Number.isNaN(parsed.getTime())) return parsed.toLocaleString();
     return 'N/A';
 }
+
+const TAB_COPY: Record<AdminTab, { eyebrow: string; title: string; description: string }> = {
+    dashboard: {
+        eyebrow: 'Command Surface',
+        title: 'Admin Dashboard',
+        description: 'Monitor the live queue, review evidence, approve incidents, and coordinate emergency escalation from a single operational dashboard.',
+    },
+    pending: {
+        eyebrow: 'Review Queue',
+        title: 'Pending Requests',
+        description: 'Inspect newly forwarded incidents, review processed evidence, and approve or reject submissions awaiting action.',
+    },
+    accepted: {
+        eyebrow: 'Archive Queue',
+        title: 'Accepted Requests',
+        description: 'Audit approved reports, inspect processed outputs, and validate the final evidence trail for accepted incidents.',
+    },
+    all: {
+        eyebrow: 'Incident Ledger',
+        title: 'All Requests',
+        description: 'Browse the full admin history across pending, accepted, and rejected requests with their complete analyzed output.',
+    },
+};
 
 const SEVERITY_COLORS: Record<string, string> = {
     high: 'text-red-400 border-red-500/40 bg-red-500/10',
@@ -139,9 +178,7 @@ export default function AdminPage() {
     const [requests, setRequests] = useState<UploadRecord[]>([]);
     const [localAdmin, setLocalAdmin] = useState(false);
     const [hydrated, setHydrated] = useState(false);
-    const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
     const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
-    const [selectedFrameIndex, setSelectedFrameIndex] = useState(0);
     const [emergencySendingFor, setEmergencySendingFor] = useState<string | null>(null);
     const [emergencySentFor, setEmergencySentFor] = useState<Set<string>>(new Set());
     const router = useRouter();
@@ -179,19 +216,13 @@ export default function AdminPage() {
     }, [allowed, fetchRequests]);
 
     useEffect(() => {
-        const tab = (searchParams.get('tab') || 'dashboard') as AdminTab;
-        if (tab === 'dashboard' || tab === 'pending' || tab === 'accepted' || tab === 'all') {
-            setActiveTab(tab);
-        }
+        setSelectedRequestId(null);
     }, [searchParams]);
 
-    useEffect(() => {
-        setSelectedRequestId(null);
-    }, [activeTab]);
-
-    useEffect(() => {
-        setSelectedFrameIndex(0);
-    }, [selectedRequestId]);
+    const activeTab: AdminTab = (() => {
+        const tab = (searchParams.get('tab') || 'dashboard') as AdminTab;
+        return tab === 'pending' || tab === 'accepted' || tab === 'all' ? tab : 'dashboard';
+    })();
 
     const pendingRequests = useMemo(
         () => requests.filter((r) => r.status === 'pending'),
@@ -237,19 +268,54 @@ export default function AdminPage() {
             : activeTab === 'accepted'
                 ? acceptedRequests
                 : requests;
+    useEffect(() => {
+        if (visibleRequests.length === 0) {
+            setSelectedRequestId(null);
+            return;
+        }
+        if (!selectedRequestId || !visibleRequests.some((r) => r.id === selectedRequestId)) {
+            setSelectedRequestId(visibleRequests[0].id);
+        }
+    }, [visibleRequests, selectedRequestId]);
+
     const selectedRequest = useMemo(
         () => visibleRequests.find((r) => r.id === selectedRequestId) ?? null,
         [visibleRequests, selectedRequestId],
     );
-    const selectedFrames = useMemo(
-        () => (selectedRequest?.detection?.annotated_frames || [])
-            .map((frame) => toDisplayImageSrc(frame))
-            .filter((frame): frame is string => Boolean(frame)),
+    const selectedProcessedMedia = useMemo(
+        () => {
+            const processedUrl =
+                toAbsoluteMediaUrl(selectedRequest?.processed_playable_url)
+                || toProcessedPlayableUrl(selectedRequest?.processed_media_url)
+                || toProcessedPlayableUrl(selectedRequest?.processed_video)
+                || toAbsoluteMediaUrl(selectedRequest?.processed_media_url)
+                || toAbsoluteMediaUrl(selectedRequest?.processed_video);
+
+            if (processedUrl) return processedUrl;
+
+            return selectedRequest?.media_type === 'image'
+                ? toDisplayImageSrc(selectedRequest?.detection?.annotated_image)
+                : toDisplayImageSrc(selectedRequest?.detection?.annotated_frames?.[0] || selectedRequest?.detection?.annotated_image);
+        },
         [selectedRequest],
     );
-    const selectedPrimaryFrame = selectedFrames[selectedFrameIndex]
-        || toDisplayImageSrc(selectedRequest?.detection?.annotated_image)
-        || null;
+    const selectedSourceMedia = useMemo(
+        () => toAbsoluteMediaUrl(selectedRequest?.video_path),
+        [selectedRequest],
+    );
+    const accidentEventGroups = useMemo(
+        () => groupEventsBySummary(
+            (selectedRequest?.detection?.events || []).filter((event) => String(event.type || '').toLowerCase() === 'accident'),
+        ),
+        [selectedRequest],
+    );
+    const modelEventGroups = useMemo(
+        () => groupEventsBySummary(
+            (selectedRequest?.detection?.events || []).filter((event) => String(event.type || '').toLowerCase() !== 'accident'),
+        ),
+        [selectedRequest],
+    );
+    const pageCopy = TAB_COPY[activeTab];
 
     const updateStatus = async (id: string, status: UploadRecord['status']) => {
         try {
@@ -299,9 +365,9 @@ export default function AdminPage() {
             <div className="border-b border-red-500/15 bg-[linear-gradient(120deg,rgba(48,9,9,0.84),rgba(14,6,6,0.94),rgba(39,7,7,0.78))] px-6 py-6">
                 <div className="container-max flex items-center justify-between">
                     <div>
-                        <p className="text-[11px] uppercase tracking-[0.34em] text-red-200/75">Command Surface</p>
-                        <h1 className="mt-2 text-3xl font-display font-bold text-white">Admin Dashboard</h1>
-                        <p className="text-slate-300 text-sm mt-2 max-w-2xl">Monitor the live queue, review evidence, approve incidents, and coordinate emergency escalation from a single operational dashboard.</p>
+                        <p className="text-[11px] uppercase tracking-[0.34em] text-red-200/75">{pageCopy.eyebrow}</p>
+                        <h1 className="mt-2 text-3xl font-display font-bold text-white">{pageCopy.title}</h1>
+                        <p className="text-slate-300 text-sm mt-2 max-w-2xl">{pageCopy.description}</p>
                     </div>
                     <button onClick={fetchRequests} className="btn-secondary py-2 px-3">
                         <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -446,13 +512,7 @@ export default function AdminPage() {
                         {/* Left list */}
                         <div className="glass-card border border-white/10 rounded-2xl p-4">
                             <h2 className="text-xl font-display font-semibold text-white mb-3">
-                                {activeTab === 'dashboard'
-                                    ? 'Live Review Queue'
-                                    : activeTab === 'pending'
-                                        ? 'Pending Requests'
-                                        : activeTab === 'accepted'
-                                            ? 'Accepted Requests'
-                                            : 'All Requests'}
+                                {activeTab === 'dashboard' ? 'Live Review Queue' : pageCopy.title}
                             </h2>
                             {visibleRequests.length === 0 ? (
                                 <p className="text-slate-400 text-sm">No requests found.</p>
@@ -541,59 +601,60 @@ export default function AdminPage() {
 
                                 {/* Source media */}
                                 <div className="rounded-xl bg-white/5 border border-white/10 p-3 space-y-2">
-                                    <p className="text-xs text-slate-400">Source File</p>
+                                    <p className="text-xs text-slate-400">Original Submission</p>
                                     {selectedRequest.media_type === 'video' ? (
                                         (() => {
-                                            const src = toAbsoluteMediaUrl(selectedRequest.video_path);
+                                            const src = selectedSourceMedia;
                                             if (!src) return <p className="text-slate-400 text-xs">No source video found.</p>;
-                                            return <video controls className="w-full rounded-lg border border-white/10 bg-black/40" src={src} />;
+                                            return (
+                                                <video controls playsInline preload="metadata" className="w-full rounded-lg border border-white/10 bg-black/40">
+                                                    <source src={src} />
+                                                </video>
+                                            );
                                         })()
                                     ) : (
                                         (() => {
-                                            const src = toAbsoluteMediaUrl(selectedRequest.video_path);
+                                            const src = selectedSourceMedia;
                                             if (!src) return <p className="text-slate-400 text-xs">No source image found.</p>;
                                             return <img src={src} alt="Source" className="w-full rounded-lg border border-white/10" />;
                                         })()
                                     )}
                                 </div>
 
-                                {/* Annotated evidence */}
+                                {/* Processed media from /processed */}
                                 <div className="rounded-xl bg-white/5 border border-white/10 p-3 space-y-2">
                                     <div className="flex items-center gap-2">
-                                        <p className="text-xs text-slate-400">Annotated Detection Frames</p>
-                                        <span className="text-[10px] px-1.5 py-0.5 bg-red-500/15 text-red-100 rounded-full border border-red-500/20">BOXED EVIDENCE</span>
+                                        <p className="text-xs text-slate-400">Processed Evidence</p>
+                                        <span className="text-[10px] px-1.5 py-0.5 bg-red-500/15 text-red-100 rounded-full border border-red-500/20">
+                                            {selectedProcessedMedia?.includes('/processed-playable/') ? '/processed-playable' : '/processed'}
+                                        </span>
                                     </div>
-                                    {selectedPrimaryFrame ? (
-                                        <img src={selectedPrimaryFrame} alt="Annotated evidence frame" className="w-full rounded-lg border border-white/10 bg-black/40" />
+                                    {selectedProcessedMedia ? (
+                                        selectedRequest.media_type === 'video' ? (
+                                            selectedProcessedMedia.startsWith('data:image/') ? (
+                                                <img src={selectedProcessedMedia} alt="Processed evidence preview" className="w-full rounded-lg border border-white/10 bg-black/40" />
+                                            ) : (
+                                                <video controls playsInline preload="metadata" className="w-full rounded-lg border border-white/10 bg-black/40">
+                                                    <source src={selectedProcessedMedia} />
+                                                </video>
+                                            )
+                                        ) : (
+                                            <img src={selectedProcessedMedia} alt="Processed evidence" className="w-full rounded-lg border border-white/10 bg-black/40" />
+                                        )
                                     ) : (
-                                        <p className="text-slate-400 text-xs">No annotated evidence frames found.</p>
+                                        <p className="text-slate-400 text-xs">No processed media was found for this request.</p>
                                     )}
-                                    {selectedFrames.length > 1 && (
-                                        <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-                                            {selectedFrames.map((frame, index) => (
-                                                <button
-                                                    key={`admin-frame-${index}`}
-                                                    onClick={() => setSelectedFrameIndex(index)}
-                                                    className={`overflow-hidden rounded-lg border transition-all ${index === selectedFrameIndex ? 'border-cyan-400/60 ring-1 ring-cyan-400/40' : 'border-white/10 hover:border-red-400/30'}`}
-                                                >
-                                                    <img src={frame} alt={`Frame ${index + 1}`} className="h-24 w-full object-cover bg-black/40" />
-                                                    <div className="border-t border-white/10 bg-black/30 px-2 py-1 text-[10px] text-slate-300">Frame {index + 1}</div>
-                                                </button>
-                                            ))}
-                                        </div>
-                                    )}
-                                    <div className="flex flex-wrap gap-2 text-xs mt-1">
-                                        {[
-                                            { label: 'Vehicle', color: '#2dd4a0' },
-                                            { label: 'Violation', color: '#e87830' },
-                                            { label: 'Accident', color: '#ef4444' },
-                                        ].map((l) => (
-                                            <span key={l.label} className="flex items-center gap-1">
-                                                <span className="w-2.5 h-2.5 rounded-sm border" style={{ borderColor: l.color, background: l.color + '30' }} />
-                                                <span className="text-slate-400">{l.label}</span>
-                                            </span>
-                                        ))}
-                                    </div>
+                                    <p className="text-xs text-slate-400">
+                                        This preview uses the processed asset saved by the backend and serves a browser-playable copy when needed.
+                                        {selectedProcessedMedia && !selectedProcessedMedia.startsWith('data:') && (
+                                            <>
+                                                {' '}
+                                                <a className="text-red-200 underline underline-offset-2" href={selectedProcessedMedia} target="_blank" rel="noreferrer">
+                                                    Open media
+                                                </a>
+                                            </>
+                                        )}
+                                    </p>
                                 </div>
 
                                 {/* Detection stats */}
@@ -653,22 +714,32 @@ export default function AdminPage() {
                                         )}
 
                                         {/* Model output details for admin review */}
-                                        <div className="grid gap-3 lg:grid-cols-2">
+                                        <div className="grid items-start gap-3 lg:grid-cols-2">
                                             <div className="rounded-xl bg-rose-500/5 border border-rose-500/20 p-3">
                                                 <div className="flex items-center gap-2 mb-3">
-                                                    <Siren className="w-4 h-4 text-rose-400" />
+                                                    <Siren className="w-4 h-4 text-rose-400 shrink-0" />
                                                     <p className="text-sm font-semibold text-white">Accident Findings</p>
+                                                    {accidentEventGroups.length > 0 && (
+                                                        <span className="ml-auto rounded-full border border-rose-400/25 bg-rose-500/10 px-2 py-0.5 text-[11px] font-semibold text-rose-100">
+                                                            {accidentEventGroups.reduce((sum, group) => sum + group.count, 0)} events
+                                                        </span>
+                                                    )}
                                                 </div>
-                                                {(selectedRequest.detection.events || []).filter((event) => String(event.type || '').toLowerCase() === 'accident').length > 0 ? (
-                                                    <div className="space-y-2">
-                                                        {(selectedRequest.detection.events || [])
-                                                            .filter((event) => String(event.type || '').toLowerCase() === 'accident')
-                                                            .map((event, idx) => (
-                                                                <div key={`accident-${idx}`} className="rounded-lg bg-white/5 border border-white/10 p-3">
+                                                {accidentEventGroups.length > 0 ? (
+                                                    <div className="max-h-72 space-y-2 overflow-auto pr-1">
+                                                        {accidentEventGroups.map((group, idx) => (
+                                                            <div key={`accident-${idx}`} className="rounded-lg bg-white/5 border border-white/10 p-3">
+                                                                <div className="flex items-start justify-between gap-3">
                                                                     <p className="text-sm font-medium text-rose-200">Accident Occurred</p>
-                                                                    <p className="text-xs text-slate-300 mt-1">{formatEventSummary(event)}</p>
+                                                                    {group.count > 1 && (
+                                                                        <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-[11px] font-semibold text-rose-100">
+                                                                            x{group.count}
+                                                                        </span>
+                                                                    )}
                                                                 </div>
-                                                            ))}
+                                                                <p className="mt-1 text-xs leading-5 text-slate-300">{group.summary}</p>
+                                                            </div>
+                                                        ))}
                                                     </div>
                                                 ) : (
                                                     <p className="text-sm text-emerald-300">No accident detected in the analyzed evidence.</p>
@@ -677,24 +748,27 @@ export default function AdminPage() {
 
                                             <div className="rounded-xl bg-red-500/5 border border-red-500/20 p-3">
                                                 <div className="flex items-center gap-2 mb-3">
-                                                    <Eye className="w-4 h-4 text-red-300" />
+                                                    <Eye className="w-4 h-4 text-red-300 shrink-0" />
                                                     <p className="text-sm font-semibold text-white">Model Output Events</p>
+                                                    {modelEventGroups.length > 0 && (
+                                                        <span className="ml-auto rounded-full border border-red-400/25 bg-red-500/10 px-2 py-0.5 text-[11px] font-semibold text-red-100">
+                                                            {modelEventGroups.reduce((sum, group) => sum + group.count, 0)} events
+                                                        </span>
+                                                    )}
                                                 </div>
-                                                {(selectedRequest.detection.events || []).filter((event) => String(event.type || '').toLowerCase() !== 'accident').length > 0 ? (
-                                                    <div className="space-y-2 max-h-80 overflow-auto pr-1">
-                                                        {(selectedRequest.detection.events || [])
-                                                            .filter((event) => String(event.type || '').toLowerCase() !== 'accident')
-                                                            .map((event, idx) => (
-                                                                <div key={`event-${idx}`} className="rounded-lg bg-white/5 border border-white/10 p-3">
-                                                                    <div className="flex items-center justify-between gap-3">
-                                                                        <p className="text-sm font-medium text-red-100">{formatEventLabel(event.type)}</p>
-                                                                        {'count' in event && typeof event.count === 'number' ? (
-                                                                            <span className="text-xs text-red-200 font-semibold">x{event.count}</span>
-                                                                        ) : null}
-                                                                    </div>
-                                                                    <p className="text-xs text-slate-300 mt-1">{formatEventSummary(event)}</p>
+                                                {modelEventGroups.length > 0 ? (
+                                                    <div className="max-h-72 space-y-2 overflow-auto pr-1">
+                                                        {modelEventGroups.map((group, idx) => (
+                                                            <div key={`event-${idx}`} className="rounded-lg bg-white/5 border border-white/10 p-3">
+                                                                <div className="flex items-start justify-between gap-3">
+                                                                    <p className="text-sm font-medium text-red-100">{group.label}</p>
+                                                                    <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[11px] font-semibold text-red-100">
+                                                                        x{group.count}
+                                                                    </span>
                                                                 </div>
-                                                            ))}
+                                                                <p className="mt-1 text-xs leading-5 text-slate-300">{group.summary}</p>
+                                                            </div>
+                                                        ))}
                                                     </div>
                                                 ) : (
                                                     <p className="text-sm text-slate-300">No violation events were recorded in the analyzed evidence.</p>
@@ -740,13 +814,13 @@ export default function AdminPage() {
                                         <>
                                             <button
                                                 onClick={() => updateStatus(selectedRequest.id, 'approved')}
-                                                className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-green-500 text-white font-semibold text-sm flex items-center gap-2"
+                                                className="btn-primary from-emerald-600 via-emerald-500 to-green-500 px-4 py-2 text-sm flex items-center gap-2"
                                             >
                                                 <CheckCircle2 className="w-4 h-4" /> Approve
                                             </button>
                                             <button
                                                 onClick={() => updateStatus(selectedRequest.id, 'rejected')}
-                                                className="px-4 py-2 rounded-xl bg-gradient-to-r from-rose-500 to-red-500 text-white font-semibold text-sm flex items-center gap-2"
+                                                className="btn-danger px-4 py-2 text-sm flex items-center gap-2"
                                             >
                                                 <XCircle className="w-4 h-4" /> Reject
                                             </button>
@@ -759,8 +833,8 @@ export default function AdminPage() {
                                             onClick={() => handleSendEmergencyWhatsApp(selectedRequest)}
                                             disabled={emergencySendingFor === selectedRequest.id || emergencySentFor.has(selectedRequest.id)}
                                             className={`px-4 py-2 rounded-xl font-semibold text-sm flex items-center gap-2 transition-all disabled:opacity-60 ${emergencySentFor.has(selectedRequest.id)
-                                                ? 'bg-emerald-500/20 border border-emerald-500/40 text-emerald-400'
-                                                : 'bg-gradient-to-r from-red-600 to-rose-500 text-white hover:from-red-500 hover:to-rose-400'}`}
+                                                ? 'btn-secondary border-emerald-500/40 bg-emerald-500/15 text-emerald-300 hover:border-emerald-400/60 hover:bg-emerald-500/20'
+                                                : 'btn-primary from-red-700 via-red-600 to-rose-500'}`}
                                         >
                                             {emergencySendingFor === selectedRequest.id ? (
                                                 <><Loader className="w-4 h-4 animate-spin" /> Sending...</>

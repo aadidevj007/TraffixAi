@@ -24,8 +24,8 @@ export default function LoginPage() {
     // Show nothing while checking auth state
     if (authLoading || user) {
         return (
-            <div className="min-h-screen bg-dark-900 flex items-center justify-center">
-                <div className="w-8 h-8 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
+            <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
+                <div className="w-8 h-8 border-2 border-red-500 border-t-transparent rounded-full animate-spin" />
             </div>
         );
     }
@@ -44,24 +44,17 @@ export default function LoginPage() {
                         ? 'Popup blocked – please allow popups for this site'
                         : e.message || 'Google sign-in failed';
             toast.error(msg);
-        } finally {
             setLoading(false);
         }
     };
 
     return (
-        <div className="min-h-screen bg-dark-900 flex items-center justify-center px-4 overflow-hidden relative">
-            <video
-                className="absolute inset-0 w-full h-full object-cover opacity-40"
-                src="/videos/login.mp4"
-                autoPlay
-                muted
-                loop
-                playsInline
-            />
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(248,113,113,0.18),transparent_28%),radial-gradient(circle_at_bottom_left,rgba(190,24,93,0.2),transparent_30%)]" />
-            <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(6,3,3,0.88),rgba(14,4,4,0.72),rgba(5,3,3,0.92))]" />
-            <div className="absolute inset-0 admin-noise opacity-60" />
+        <div className="min-h-screen flex items-center justify-center px-4 overflow-hidden relative">
+            {/* Matte black base + diagonal red gradient */}
+            <div className="absolute inset-0 bg-[#0a0a0a]" />
+            <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(10,10,10,1)_0%,rgba(40,8,8,0.8)_30%,rgba(120,15,15,0.3)_55%,rgba(180,20,20,0.15)_70%,rgba(10,10,10,1)_100%)]" />
+            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_0%,rgba(220,38,38,0.12),transparent_50%)]" />
+            <div className="absolute inset-0 admin-noise opacity-40" />
 
             <motion.div
                 initial={{ opacity: 0, y: 30 }}
@@ -73,22 +66,21 @@ export default function LoginPage() {
                 <div className="text-center mb-10">
                     <BrandLogo href="/" size="md" className="mb-6" />
                     <h1 className="text-3xl font-display font-bold text-white mb-2">Welcome</h1>
-                    <p className="text-rose-100/70">Sign in to continue</p>
+                    <p className="text-red-100/70">Sign in to continue</p>
                 </div>
 
                 {/* Google Sign-In Card */}
-                <div className="glass-card p-8 border border-red-500/20 space-y-6 shadow-[0_20px_80px_rgba(0,0,0,0.5)]">
-                    <div className="rounded-2xl border border-red-500/20 bg-[linear-gradient(135deg,rgba(127,29,29,0.38),rgba(24,24,27,0.1))] p-4">
+                <div className="glass-card p-8 border border-red-600/20 space-y-6 shadow-[0_20px_80px_rgba(0,0,0,0.6)]">
+                    <div className="rounded-2xl border border-red-600/20 bg-[linear-gradient(135deg,rgba(120,15,15,0.3),rgba(15,15,15,0.2))] p-4">
                         <p className="text-xs uppercase tracking-[0.35em] text-red-200/80">Citywide Access</p>
-                        <p className="mt-2 text-sm text-rose-50/80">Enter the traffic intelligence network, review incidents, and manage safety workflows in one place.</p>
+                        <p className="mt-2 text-sm text-red-50/80">Enter the traffic intelligence network, review incidents, and manage safety workflows in one place.</p>
                     </div>
 
                     {/* Google Button */}
                     <button
                         onClick={handleGoogle}
                         disabled={loading}
-                        className="w-full flex items-center justify-center gap-3 bg-white text-gray-800 font-semibold px-6 py-4 rounded-xl
-                       hover:bg-gray-100 active:scale-95 transition-all duration-200 shadow-lg hover:shadow-xl"
+                        className="btn-secondary w-full justify-center gap-3 border-white/20 bg-white/10 text-white hover:border-white/40 hover:bg-white/15 hover:text-white"
                     >
                         {loading ? (
                             <div className="w-5 h-5 border-2 border-gray-400 border-t-gray-800 rounded-full animate-spin" />
@@ -109,16 +101,14 @@ export default function LoginPage() {
                     {/* Divider */}
                     <div className="flex items-center gap-3">
                         <div className="flex-1 h-px bg-white/10" />
-                        <span className="text-slate-500 text-xs">OR</span>
+                        <span className="text-neutral-500 text-xs">OR</span>
                         <div className="flex-1 h-px bg-white/10" />
                     </div>
 
                     {/* Admin Login Link */}
                     <Link
                         href="/admin-login"
-                        className="w-full flex items-center justify-center gap-2 border border-red-500/20 text-slate-300
-                       px-6 py-3.5 rounded-xl hover:bg-red-500/10 hover:border-red-500/30 hover:text-white
-                       transition-all duration-200 font-medium text-sm group"
+                        className="btn-secondary w-full justify-center gap-2 text-sm group"
                     >
                         <Shield className="w-4 h-4 text-red-300 group-hover:text-red-200 transition-colors" />
                         Admin Login (Username & Password)
@@ -126,7 +116,7 @@ export default function LoginPage() {
                     </Link>
 
                     {/* Info */}
-                    <p className="text-center text-xs text-slate-500 leading-relaxed">
+                    <p className="text-center text-xs text-neutral-500 leading-relaxed">
                         By signing in you agree to our{' '}
                         <Link href="/terms" className="text-red-300 hover:underline">Terms of Service</Link>
                         {' '}and{' '}
@@ -137,8 +127,8 @@ export default function LoginPage() {
                 {/* Feature badges */}
                 <div className="mt-6 grid grid-cols-3 gap-3">
                     {['Secure OAuth', 'Role-Based Access', 'Instant Dashboard'].map((f) => (
-                        <div key={f} className="glass-card p-3 text-center border border-red-500/10">
-                            <p className="text-xs text-slate-400">{f}</p>
+                        <div key={f} className="glass-card p-3 text-center border border-red-600/10">
+                            <p className="text-xs text-neutral-400">{f}</p>
                         </div>
                     ))}
                 </div>

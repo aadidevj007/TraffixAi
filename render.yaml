@@ -18,6 +18,8 @@ services:
         value: 10000
       - key: CONF_THRESHOLD
         value: "0.25"
+      - key: YOLO_CONFIG_DIR
+        value: /tmp/Ultralytics
       - key: ENABLE_CRASH_MODEL_AUX
         value: "false"
       - key: ENABLE_STATIC_IMAGE_ACCIDENT_DETECTION

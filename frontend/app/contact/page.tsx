@@ -9,19 +9,7 @@ const teamMembers = [
         regNo: '99230041022',
         department: 'B.Tech - CSE',
         github1: 'https://github.com/aadidevj007'
-    },
-    {
-        name: 'S Dhanush',
-        regNo: '99230041087',
-        department: 'B.Tech - CSE',
-        github1: 'https://github.com/shoyo44'
-    },
-    {
-        name: 'K Sainithi',
-        regNo: '99230041098',
-        department: 'B.Tech - CSE',
-        github1: 'https://github.com/Sainithi147'
-    },
+    }
 ];
 
 export default function ContactPage() {
@@ -72,7 +60,7 @@ export default function ContactPage() {
 
                 <div className="glass-card border border-cyan-500/20 p-5 text-center">
                     <p className="text-slate-200 font-medium">
-                        Work done by students of Kalasalingam Academy of Research and Education.
+                        Work done by student of Kalasalingam Academy of Research and Education.
                     </p>
                 </div>
             </div>

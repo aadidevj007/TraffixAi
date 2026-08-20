@@ -16,18 +16,64 @@ export default function AppBackgroundVideo() {
 
     return (
         <div className="fixed inset-0 -z-10 pointer-events-none overflow-hidden">
-            <video
-                className="w-full h-full object-cover opacity-[0.28] saturate-[1.15] contrast-[1.08] scale-[1.04] blur-[1px]"
-                src="/videos/mainbg.mp4"
-                autoPlay
-                muted
-                loop
-                playsInline
-            />
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_14%_18%,rgba(34,211,238,0.14),transparent_24%),radial-gradient(circle_at_84%_20%,rgba(251,113,133,0.14),transparent_26%),radial-gradient(circle_at_70%_78%,rgba(239,68,68,0.16),transparent_28%),linear-gradient(125deg,rgba(6,10,20,0.76),rgba(26,5,10,0.7),rgba(8,4,4,0.92))]" />
-            <div className="absolute inset-0 opacity-[0.12] [background-image:linear-gradient(rgba(255,255,255,0.08)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.08)_1px,transparent_1px)] [background-size:48px_48px]" />
-            <div className="absolute inset-y-0 left-[-10%] w-[32rem] bg-[radial-gradient(circle,rgba(56,189,248,0.18),transparent_62%)] blur-3xl" />
-            <div className="absolute inset-y-0 right-[-12%] w-[34rem] bg-[radial-gradient(circle,rgba(244,63,94,0.16),transparent_60%)] blur-3xl" />
+            {/* Deep space base */}
+            <div className="absolute inset-0" style={{ background: '#020408' }} />
+
+            {/* Multi-layer nebula gradients */}
+            <div className="absolute inset-0" style={{
+                background: `
+                    radial-gradient(ellipse 80% 50% at 20% 20%, rgba(6,182,212,0.06), transparent),
+                    radial-gradient(ellipse 60% 40% at 80% 80%, rgba(139,92,246,0.05), transparent),
+                    radial-gradient(ellipse 40% 60% at 50% 0%,   rgba(6,182,212,0.04), transparent),
+                    radial-gradient(ellipse 50% 30% at 90% 40%,  rgba(245,158,11,0.03), transparent)
+                `
+            }} />
+
+            {/* Cyber grid */}
+            <div className="absolute inset-0" style={{
+                backgroundImage: `
+                    linear-gradient(rgba(6,182,212,0.035) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(6,182,212,0.035) 1px, transparent 1px)
+                `,
+                backgroundSize: '60px 60px'
+            }} />
+
+            {/* Horizontal scan lines */}
+            <div className="absolute inset-0" style={{
+                backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(6,182,212,0.012) 2px, rgba(6,182,212,0.012) 4px)',
+            }} />
+
+            {/* Animated ambient blobs */}
+            <div className="absolute animate-float" style={{
+                top: '-10%', left: '-5%',
+                width: '40vw', height: '40vw',
+                borderRadius: '999px',
+                background: 'radial-gradient(circle, rgba(6,182,212,0.07), transparent 70%)',
+                filter: 'blur(60px)',
+                animationDuration: '12s',
+            }} />
+            <div className="absolute animate-float" style={{
+                bottom: '-5%', right: '-5%',
+                width: '35vw', height: '35vw',
+                borderRadius: '999px',
+                background: 'radial-gradient(circle, rgba(139,92,246,0.05), transparent 70%)',
+                filter: 'blur(80px)',
+                animationDuration: '16s',
+                animationDelay: '-6s',
+            }} />
+            <div className="absolute animate-float" style={{
+                top: '40%', right: '10%',
+                width: '20vw', height: '20vw',
+                borderRadius: '999px',
+                background: 'radial-gradient(circle, rgba(245,158,11,0.04), transparent 70%)',
+                filter: 'blur(60px)',
+                animationDuration: '10s',
+                animationDelay: '-3s',
+            }} />
+
+            {/* Bottom fade to dark */}
+            <div className="absolute bottom-0 left-0 right-0 h-64"
+                style={{ background: 'linear-gradient(to top, #020408, transparent)' }} />
         </div>
     );
 }

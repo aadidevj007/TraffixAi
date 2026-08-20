@@ -57,25 +57,20 @@ export default function AdminLoginPage() {
     };
 
     return (
-        <div className="min-h-screen bg-dark-900 flex items-center justify-center px-4 overflow-hidden relative">
-            <video
-                className="absolute inset-0 h-full w-full object-cover opacity-40"
-                src="/videos/login.mp4"
-                autoPlay
-                muted
-                loop
-                playsInline
-            />
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(248,113,113,0.2),transparent_30%),radial-gradient(circle_at_bottom_right,rgba(190,24,93,0.22),transparent_32%)]" />
-            <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(5,3,3,0.92),rgba(19,5,5,0.74),rgba(7,3,3,0.96))]" />
-            <div className="absolute inset-0 admin-noise opacity-60" />
+        <div className="min-h-screen flex items-center justify-center px-4 overflow-hidden relative">
+            {/* Matte black base + diagonal red gradient */}
+            <div className="absolute inset-0 bg-[#0a0a0a]" />
+            <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(10,10,10,1)_0%,rgba(40,8,8,0.8)_30%,rgba(120,15,15,0.3)_55%,rgba(180,20,20,0.15)_70%,rgba(10,10,10,1)_100%)]" />
+            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_0%,rgba(220,38,38,0.12),transparent_50%)]" />
+            <div className="absolute inset-0 admin-noise opacity-40" />
+
             <motion.div
                 initial={{ opacity: 0, y: 30 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.4 }}
                 className="w-full max-w-md relative z-10"
             >
-                <Link href="/login" className="inline-flex items-center gap-2 text-slate-300 hover:text-white text-sm mb-6 transition-colors">
+                <Link href="/login" className="inline-flex items-center gap-2 text-neutral-300 hover:text-white text-sm mb-6 transition-colors">
                     <ArrowLeft className="w-4 h-4" />
                     Back to Login
                 </Link>
@@ -83,13 +78,13 @@ export default function AdminLoginPage() {
                 <div className="text-center mb-8">
                     <BrandLogo href="/" size="md" className="mb-4" />
                     <h1 className="text-3xl font-display font-bold text-white mb-2">Admin Login</h1>
-                    <p className="text-rose-100/70 text-sm">Sign in with local admin username and password.</p>
+                    <p className="text-red-100/70 text-sm">Sign in with local admin username and password.</p>
                 </div>
 
-                <div className="glass-card p-8 border border-red-500/20 shadow-[0_24px_80px_rgba(0,0,0,0.55)]">
-                    <div className="mb-5 rounded-2xl border border-red-500/20 bg-[linear-gradient(135deg,rgba(127,29,29,0.42),rgba(24,24,27,0.08))] p-4">
+                <div className="glass-card p-8 border border-red-600/20 shadow-[0_24px_80px_rgba(0,0,0,0.6)]">
+                    <div className="mb-5 rounded-2xl border border-red-600/20 bg-[linear-gradient(135deg,rgba(120,15,15,0.3),rgba(15,15,15,0.2))] p-4">
                         <p className="text-xs uppercase tracking-[0.35em] text-red-200/80">Restricted Access</p>
-                        <p className="mt-2 text-sm text-rose-50/80">Emergency workflows, decision review, and enforcement escalation are available only to authorized operators.</p>
+                        <p className="mt-2 text-sm text-red-50/80">Emergency workflows, decision review, and enforcement escalation are available only to authorized operators.</p>
                     </div>
                     <form onSubmit={handleLogin} className="space-y-4">
                         <input
@@ -114,7 +109,7 @@ export default function AdminLoginPage() {
                             <button
                                 type="button"
                                 onClick={() => setShowPass(!showPass)}
-                                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-red-100 transition-colors"
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-red-100 transition-colors"
                             >
                                 {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                             </button>
@@ -122,7 +117,7 @@ export default function AdminLoginPage() {
                         <button
                             type="submit"
                             disabled={loading}
-                            className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-red-600 via-rose-600 to-orange-500 text-white font-semibold px-6 py-4 rounded-xl disabled:opacity-50 hover:from-red-500 hover:to-orange-400 transition-all shadow-[0_10px_40px_rgba(239,68,68,0.28)]"
+                            className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-red-700 via-red-600 to-red-500 text-white font-semibold px-6 py-4 rounded-xl disabled:opacity-50 hover:from-red-600 hover:to-red-400 transition-all shadow-[0_10px_40px_rgba(220,38,38,0.3)]"
                         >
                             <ShieldAlert className="w-4 h-4" />
                             {loading ? 'Checking...' : 'Access Admin Panel'}

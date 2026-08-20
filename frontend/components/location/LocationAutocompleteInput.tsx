@@ -110,8 +110,10 @@ export default function LocationAutocompleteInput({
 
     return (
         <div className="relative">
-            <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            {loading && <Loader className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 animate-spin" />}
+            <div className="pointer-events-none absolute left-3 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-2xl border border-red-500/18 bg-red-500/8">
+                <MapPin className="h-4 w-4 text-red-200" />
+            </div>
+            {loading && <Loader className="absolute right-4 top-1/2 z-10 h-4 w-4 -translate-y-1/2 animate-spin text-red-300" />}
             <input
                 type="text"
                 value={query}
@@ -143,20 +145,20 @@ export default function LocationAutocompleteInput({
                         setOpen(false);
                     }
                 }}
-                className={`input-field pl-10 pr-10 ${inputClassName}`}
+                className={`input-field min-h-[72px] rounded-[1.4rem] pl-16 pr-12 text-[1.05rem] font-medium text-slate-50 ${inputClassName}`}
                 autoComplete="off"
             />
 
             {open && suggestions.length > 0 && (
-                <div className="absolute z-30 mt-2 w-full overflow-hidden rounded-xl border border-white/10 bg-dark-900/95 backdrop-blur-xl shadow-xl">
+                <div className="absolute z-30 mt-3 w-full overflow-hidden rounded-[1.4rem] border border-red-500/16 bg-[linear-gradient(180deg,rgba(20,7,7,0.98),rgba(24,9,12,0.94))] shadow-[0_24px_70px_rgba(2,8,23,0.45)] backdrop-blur-2xl">
                     {suggestions.map((suggestion, index) => (
                         <button
                             key={suggestion.place_id}
                             type="button"
                             onMouseDown={() => select(suggestion.display_name)}
-                            className={`w-full px-3 py-2.5 text-left text-sm transition-colors ${index === activeIndex
-                                    ? 'bg-cyan-500/20 text-cyan-300'
-                                    : 'text-slate-300 hover:bg-white/10'
+                            className={`w-full border-b border-white/6 px-4 py-3 text-left text-sm transition-colors last:border-b-0 ${index === activeIndex
+                                    ? 'bg-red-500/16 text-red-100'
+                                    : 'text-slate-300 hover:bg-white/6'
                                 }`}
                         >
                             {suggestion.display_name}

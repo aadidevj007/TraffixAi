@@ -7,11 +7,10 @@ import {
     AlertTriangle, Car, CheckCircle2, ShieldAlert, User, MapPin, Gavel,
     Scale, DollarSign, BookOpen, Clock, ArrowLeft, LayoutDashboard,
     Siren, Phone, FileText, ShieldX, Gauge, UserX, Crosshair, BadgeAlert,
-    Info, Send, Wifi, WifiOff, ImageIcon, Video,
+    Info, Send, Wifi, WifiOff,
 } from 'lucide-react';
 import { clearUploadSession, readUploadSession, type MediaType } from '@/lib/uploadGate';
 import { getAnalysisResult } from '@/lib/api';
-import { toDisplayImageSrc } from '@/lib/media';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type ViolationJudge = {
@@ -260,11 +259,6 @@ export default function VerdictCenterPage() {
     const whatsapp = result?.judge?.emergency_whatsapp;
     const llm = result?.llm_judge;
     const riskScore = typeof result?.risk_score === 'number' ? result.risk_score : 0;
-    const annotatedImageSrc = toDisplayImageSrc(result?.annotated_image);
-    const previewFrames = (result?.annotated_frames || [])
-        .map((frame) => toDisplayImageSrc(frame))
-        .filter((frame): frame is string => Boolean(frame));
-
     if (!result) {
         return (
             <div className="min-h-screen bg-dark-900 pt-24 flex items-center justify-center">
@@ -331,60 +325,6 @@ export default function VerdictCenterPage() {
                         color={result.accidents ? 'text-red-400' : 'text-emerald-400'}
                         border={result.accidents ? 'border-red-500/30' : 'border-emerald-500/20'} />
                 </div>
-
-                <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="glass-card p-6 space-y-4">
-                    <div className="flex items-center gap-3">
-                        {mediaType === 'video' ? <Video className="w-5 h-5 text-cyan-400" /> : <ImageIcon className="w-5 h-5 text-cyan-400" />}
-                        <h2 className="font-semibold text-white">AI Evidence Preview</h2>
-                    </div>
-                    <p className="text-sm text-slate-400">
-                        User view shows annotated evidence snapshots only. Raw processed output is reserved for admin review.
-                    </p>
-
-                    {mediaType === 'image' && annotatedImageSrc && (
-                        <div className="space-y-3">
-                            <img
-                                src={annotatedImageSrc}
-                                alt="Annotated evidence"
-                                className="w-full rounded-2xl border border-white/10 bg-black/20"
-                            />
-                        </div>
-                    )}
-
-                    {mediaType === 'video' && (
-                        <div className="space-y-4">
-                            {previewFrames.length > 0 ? (
-                                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                                    {previewFrames.map((frame, index) => (
-                                        <div key={`frame-${index}`} className="space-y-2">
-                                            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Frame {index + 1}</p>
-                                            <img
-                                                src={frame}
-                                                alt={`Annotated frame ${index + 1}`}
-                                                className="w-full rounded-2xl border border-white/10 bg-black/20"
-                                            />
-                                        </div>
-                                    ))}
-                                </div>
-                            ) : annotatedImageSrc ? (
-                                <div className="space-y-2">
-                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Preview Frame</p>
-                                    <img
-                                        src={annotatedImageSrc}
-                                        alt="Annotated preview frame"
-                                        className="w-full rounded-2xl border border-white/10 bg-black/20"
-                                    />
-                                </div>
-                            ) : (
-                                <p className="text-sm text-slate-400">Annotated preview frames are not available for this report.</p>
-                            )}
-                        </div>
-                    )}
-
-                    {!annotatedImageSrc && previewFrames.length === 0 && (
-                        <p className="text-sm text-slate-400">No annotated evidence preview is attached to this result.</p>
-                    )}
-                </motion.div>
 
                 {/* ── Violation Judgment ── */}
                 <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="glass-card p-6 space-y-4">

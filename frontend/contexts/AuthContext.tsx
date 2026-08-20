@@ -26,7 +26,7 @@ export interface UserProfile {
     phone: string;
     role: 'User' | 'Admin' | 'Authority';
     photoURL?: string;
-    createdAt: any;
+    createdAt: unknown;
 }
 
 interface AuthContextType {
@@ -172,7 +172,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
             setUser(firebaseUser);
             if (firebaseUser) {
-                setLoading(false);
                 try {
                     const profileData = await fetchOrCreateProfile(firebaseUser);
                     void syncUserToBackend({
@@ -184,6 +183,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     });
                 } catch (err) {
                     console.error('Profile fetch error:', err);
+                } finally {
+                    setLoading(false);
                 }
             } else {
                 setProfile(null);
@@ -222,15 +223,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         resetInactivityTimer();
     };
 
-    /** Regular users sign in with Google → redirect to dashboard */
+    /** Regular users sign in with Google → login page useEffect handles redirect */
     const loginWithGoogle = async () => {
         if (!auth) {
             throw new Error('Firebase is not configured. Set NEXT_PUBLIC_FIREBASE_* in frontend/.env.local');
         }
+        if (typeof window !== 'undefined') {
+            sessionStorage.removeItem('localAdmin');
+        }
         const result = await signInWithPopup(auth, googleProvider);
-        await fetchOrCreateProfile(result.user, 'User');
+        setUser(result.user);
+        const nextProfile = await fetchOrCreateProfile(result.user, 'User');
+        await syncUserToBackend({
+            name: nextProfile.name || result.user.displayName || 'User',
+            email: nextProfile.email || result.user.email || undefined,
+            role: nextProfile.role,
+        });
         resetInactivityTimer();
-        router.push('/dashboard');
+        router.replace(nextProfile.role === 'Admin' ? '/admin' : '/dashboard');
     };
 
     /** Admin-only: email + password login → redirect to admin */
@@ -248,11 +258,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Clear local admin session
         if (isLocalAdmin()) {
             sessionStorage.removeItem('localAdmin');
+            setUser(null);
             setProfile(null);
             router.push('/login');
             return;
         }
         if (auth) await signOut(auth);
+        setUser(null);
         setProfile(null);
         router.push('/login');
     };

@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { Brain, Camera, FileText, ShieldCheck, Sparkles } from 'lucide-react';
 
@@ -71,4 +70,3 @@ export default function AboutPage() {
         </div>
     );
 }
-

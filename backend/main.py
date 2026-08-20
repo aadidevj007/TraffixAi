@@ -23,6 +23,7 @@ from bson.errors import InvalidDocument
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from pymongo import MongoClient
@@ -37,6 +38,45 @@ try:
 except Exception:  # pragma: no cover - optional dependency fallback
     TwilioException = Exception
     TwilioClient = None
+
+
+def _ensure_numpy_compatibility() -> None:
+    version_text = getattr(np, "__version__", "0")
+    major_text = version_text.split(".", 1)[0]
+    try:
+        major = int(major_text)
+    except ValueError:
+        return
+
+    if major < 2:
+        return
+
+    executable = Path(os.sys.executable)
+    activate_hint = ""
+    if executable.name.lower() == "python.exe" and executable.parent.name.lower() == "scripts":
+        activate_hint = (
+            f"\nDetected interpreter: {executable}\n"
+            "Repair this environment with:\n"
+            f'  "{executable}" -m pip install "numpy<2"'
+        )
+    else:
+        activate_hint = (
+            "\nThis usually means the backend was started with a global Python instead of "
+            "the project virtual environment.\n"
+            "From the backend directory, run:\n"
+            "  .\\venv\\Scripts\\Activate.ps1\n"
+            '  python -m pip install "numpy<2"\n'
+            "  python main.py"
+        )
+
+    raise RuntimeError(
+        "TraffixAI backend requires NumPy 1.x for the current torch/ultralytics stack, "
+        f"but found NumPy {version_text}. Please install 'numpy<2' before starting the backend."
+        f"{activate_hint}"
+    )
+
+
+_ensure_numpy_compatibility()
 
 from ai.llm_judge import LLMJudge
 from ai.traffic_monitor import TrafficMonitor
@@ -465,6 +505,28 @@ def _processed_media_url(processed_path: str) -> str:
     return f"/processed/{Path(processed_path).name}"
 
 
+def _processed_playable_media_url(processed_path: str) -> str:
+    return f"/processed-playable/{Path(processed_path).name}"
+
+
+def _uploaded_media_url(upload_path: str) -> str:
+    return f"/uploads/{Path(upload_path).name}"
+
+
+def _report_user_details(user_id: str | None) -> dict[str, Any]:
+    if not user_id:
+        return {}
+
+    user_row = users_col.find_one(
+        {"firebase_uid": user_id},
+        {"_id": 0, "firebase_uid": 1, "name": 1, "email": 1, "phone": 1, "role": 1},
+    )
+    if user_row:
+        return user_row
+
+    return {"firebase_uid": user_id}
+
+
 def _normalize_whatsapp_address(raw: str, *, default: str = "") -> str:
     value = (raw or default).strip()
     if not value:
@@ -836,6 +898,12 @@ def analyze_frame(frame: np.ndarray, *, is_static_image: bool = False) -> tuple[
     try:
         results = monitor.process_frame(frame, is_static_image=is_static_image) or {}
         stats = _monitor_results_to_stats(results)
+        # Add risk level to per-frame stats
+        risk = _risk_score(stats['violations'], stats['accidents'], stats['density_score'])
+        stats['risk_score'] = risk['score']
+        stats['risk_level'] = risk['level']
+        # Pass violation event detail straight through
+        stats['violation_detail'] = results.get('violations', [])
         try:
             annotated = monitor.draw_results(frame.copy(), results)
         except Exception:
@@ -1016,130 +1084,50 @@ def process_video(path: Path) -> dict[str, Any]:
     monitor.reset_state()
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
-    target_analysis_fps = float(os.getenv("ANALYSIS_TARGET_FPS", "20.0"))
-    frame_interval = max(1, int(round(fps / max(target_analysis_fps, 0.1))))
-    sample_fps = round((fps / frame_interval), 2) if frame_interval > 0 else 0.0
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-    duration_seconds = (total_frames / fps) if fps and fps > 0 else 0.0
+    duration_secs = (total_frames / fps) if fps > 0 else 0.0
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 1280)
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 720)
-    output_path = PROCESSED_DIR / f"processed_{path.stem}_{uuid.uuid4().hex[:8]}.mp4"
-    codec_candidates = ("mp4v", "avc1", "XVID", "MJPG")
+
+    # ── Dynamic frame sampling ────────────────────────────────────────────
+    # Target ~12 analysed fps regardless of source FPS — enough for tracking
+    # without wasting CPU on redundant frames.
+    target_analysis_fps = float(os.getenv("ANALYSIS_TARGET_FPS", "12.0"))
+    frame_interval = max(1, int(round(fps / max(target_analysis_fps, 0.1))))
+    sample_fps = round(fps / frame_interval, 2) if frame_interval > 0 else 0.0
+
+    output_base = PROCESSED_DIR / f"processed_{path.stem}_{uuid.uuid4().hex[:8]}"
+    output_path = output_base.with_suffix(".mp4")
+    codec_candidates = (("mp4v", output_path),)
     writer = None
-    for codec in codec_candidates:
+    for codec, candidate_path in codec_candidates:
         candidate = cv2.VideoWriter(
-            str(output_path),
+            str(candidate_path),
             cv2.VideoWriter_fourcc(*codec),
             fps if fps > 0 else 24.0,
             (width, height),
         )
         if candidate.isOpened():
             writer = candidate
+            output_path = candidate_path
             break
         candidate.release()
     if writer is None:
+        for codec, suffix in (("XVID", ".avi"), ("MJPG", ".avi")):
+            candidate_path = output_base.with_suffix(suffix)
+            candidate = cv2.VideoWriter(
+                str(candidate_path),
+                cv2.VideoWriter_fourcc(*codec),
+                fps if fps > 0 else 24.0,
+                (width, height),
+            )
+            if candidate.isOpened():
+                writer = candidate
+                output_path = candidate_path
+                break
+            candidate.release()
+    if writer is None:
         cap.release()
-        raise HTTPException(status_code=500, detail="Could not initialize video writer")
-
-    frame_idx = 0
-    analyzed = 0
-    accum = defaultdict(float)
-    collected_tags: list[str] = []
-    collected_violations: list[dict] = []
-    collected_events: list[dict] = []
-    collected_objects: Counter[str] = Counter()
-    preview_frames_enabled = os.getenv("VIDEO_PREVIEW_FRAMES_ENABLED", "0").strip().lower() in {"1", "true", "yes"}
-    annotated_frames: list[str] = []
-    max_preview_frames = int(os.getenv("VIDEO_PREVIEW_MAX_FRAMES", "8"))
-    last_preview_second = -1
-    last_annotated: np.ndarray | None = None
-    last_boxes: list[dict[str, Any]] = []
-
-    while True:
-        ok, frame = cap.read()
-        if not ok:
-            break
-
-        if frame_idx % frame_interval == 0:
-            try:
-                annotated, stats = analyze_frame(frame.copy())
-            except HTTPException:
-                # Continue processing remaining frames when one frame fails.
-                frame_idx += 1
-                writer.write(frame)
-                continue
-            analyzed += 1
-            accum["vehicles"] += stats["vehicles"]
-            accum["pedestrians"] += stats["pedestrians"]
-            accum["accidents"] += stats["accidents"]
-            accum["violations"] += stats["violations"]
-            accum["confidence"] += stats["confidence"]
-            accum["density_score"] += stats["density_score"]
-            collected_tags.extend(stats["violation_tags"])
-            collected_violations.extend([
-                b for b in stats["detection_boxes"] if b["category"] == "violation"
-            ])
-            collected_events.extend(stats.get("events", []))
-            last_boxes = stats["detection_boxes"]
-            for obj in stats["objects"]:
-                collected_objects[obj["class"]] += int(obj["count"])
-            last_annotated = annotated
-
-            if preview_frames_enabled and max_preview_frames > 0:
-                current_second = int(frame_idx / max(fps, 1.0))
-                if (
-                    len(annotated_frames) < max_preview_frames
-                    and current_second != last_preview_second
-                ):
-                    annotated_frames.append(_frame_to_base64(annotated))
-                    last_preview_second = current_second
-            writer.write(annotated)
-        else:
-            writer.write(frame)
-
-        frame_idx += 1
-
-    cap.release()
-    writer.release()
-
-    if analyzed == 0:
-        raise HTTPException(status_code=400, detail="No frames analyzed from video")
-
-    avg_conf = accum["confidence"] / analyzed
-    avg_density = accum["density_score"] / analyzed
-
-    # Deduplicate violation types across frames
-    vtype_counter: Counter[str] = Counter(t for t in collected_tags)
-    violation_types = [
-        {"label": vtype.replace("_", " ").title(), "count": cnt}
-        for vtype, cnt in vtype_counter.items()
-    ]
-
-    agg = {
-        "vehicles": int(accum["vehicles"]),
-        "pedestrians": int(accum["pedestrians"]),
-        "accidents": int(accum["accidents"]),
-        "violations": int(accum["violations"]),
-        "violation_tags": collected_tags,
-        "violation_types": violation_types,
-        "detection_boxes": last_boxes,
-        "confidence": round(avg_conf, 3),
-        "objects": [
-            {"class": k, "count": v, "confidence": round(avg_conf, 3)}
-            for k, v in collected_objects.items()
-        ],
-        "density_score": round(avg_density, 2),
-        "frames_analyzed": analyzed,
-        "total_frames": total_frames,
-        "duration_seconds": round(duration_seconds, 2),
-        "analysis_sample_fps": sample_fps,
-        "processed_path": str(output_path),
-        "events": collected_events,
-        "vehicle_count": int(accum["vehicles"]),
-    }
-    if preview_frames_enabled and annotated_frames:
-        agg["annotated_frames"] = annotated_frames
-    if last_annotated is not None:
         agg["annotated_image"] = _frame_to_base64(last_annotated)
     return agg
 
@@ -1225,12 +1213,25 @@ def _store_upload(
 def _report_to_result_payload(row: dict[str, Any]) -> dict[str, Any]:
     detection = row.get("detection", {}) or {}
     processed = row.get("processed_video", "") or row.get("video_path", "")
+    upload_path = str(row.get("video_path", "") or "")
     processed_url = ""
     if processed:
         processed_url = processed if str(processed).startswith("/processed/") else _processed_media_url(str(processed))
+    playable_url = ""
+    if processed:
+        playable_url = (
+            processed
+            if str(processed).startswith("/processed-playable/")
+            else _processed_playable_media_url(str(processed))
+        )
+    uploaded_url = ""
+    if upload_path:
+        uploaded_url = upload_path if upload_path.startswith("/uploads/") else _uploaded_media_url(upload_path)
 
     return {
         "id": str(row.get("_id")),
+        "user_id": row.get("user_id", ""),
+        "user_details": _report_user_details(row.get("user_id")),
         "media_type": row.get("media_type", "image"),
         "vehicles": int(detection.get("vehicles", 0)),
         "pedestrians": int(detection.get("pedestrians", 0)),
@@ -1249,11 +1250,30 @@ def _report_to_result_payload(row: dict[str, Any]) -> dict[str, Any]:
         "annotated_image": detection.get("annotated_image", ""),
         "annotated_frames": detection.get("annotated_frames", []),
         "confidence": float(detection.get("confidence", 0) or 0),
+        "uploaded_media_path": upload_path,
+        "uploaded_media_url": uploaded_url,
         "processed_media_url": processed_url,
+        "processed_playable_url": playable_url,
+        "description": row.get("description", ""),
+        "date": row.get("date", ""),
+        "time": row.get("time", ""),
+        "status": row.get("status", "pending"),
+        "incidentType": row.get("incidentType", ""),
         "llm_judge": row.get("llm_judge", {}) or {},
         "judge": row.get("judge", {}) or {},
         "analyzed_at": row.get("timestamp") or row.get("created_at") or now_iso(),
     }
+
+
+def _processed_video_media_type(source_path: Path) -> str:
+    suffix = source_path.suffix.lower()
+    if suffix == ".webm":
+        return "video/webm"
+    if suffix == ".avi":
+        return "video/x-msvideo"
+    if suffix == ".mov":
+        return "video/quicktime"
+    return "video/mp4"
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────────
@@ -1273,6 +1293,20 @@ def health() -> dict[str, Any]:
         "model_path": _model_path,
         "authority_email": AUTHORITY_EMAIL,
     }
+
+
+@app.get("/processed-playable/{filename}")
+def get_processed_playable_video(filename: str) -> FileResponse:
+    safe_name = Path(filename).name
+    source_path = PROCESSED_DIR / safe_name
+    if not source_path.exists():
+        raise HTTPException(status_code=404, detail="Processed media not found")
+
+    return FileResponse(
+        str(source_path),
+        media_type=_processed_video_media_type(source_path),
+        filename=source_path.name,
+    )
 
 
 @app.post("/auth/sync-user")
@@ -1566,7 +1600,13 @@ def get_admin_requests(
         "detection.violations": 1,
         "detection.risk_score": 1,
         "detection.confidence": 1,
+        "detection.frames_analyzed": 1,
+        "detection.total_frames": 1,
+        "detection.duration_seconds": 1,
+        "detection.analysis_sample_fps": 1,
         "detection.violation_types": 1,
+        "detection.events": 1,
+        "detection.objects": 1,
         "detection.annotated_image": 1,
         "detection.annotated_frames": 1,
         "judge": 1,
